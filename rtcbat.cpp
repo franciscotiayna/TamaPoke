@@ -70,10 +70,12 @@ static bool cachedCharging = false, cachedUsb = true;
 
 static BatMonitor mon;
 static bool monDischarging = false;
+static uint32_t pollMs = 2000;
+void batSetPollMs(uint32_t ms) { pollMs = ms; }
 
 static void refreshPower() {
   uint32_t now = millis();
-  if (powerCacheT && now - powerCacheT < 2000) return;
+  if (powerCacheT && now - powerCacheT < pollMs) return;
   powerCacheT = now ? now : 1;
   if (!pmuOk) { cachedPct = -1; cachedCharging = false; cachedUsb = true; return; }
   bool conn = pmu.isBatteryConnect();
@@ -101,6 +103,7 @@ void batPowerOff() {
 }
 int batMillivolts() { return pmuOk ? (int)pmu.getBattVoltage() : 0; }
 bool usbPresent() { refreshPower(); return cachedUsb; }
+bool usbPresentNow() { return pmuOk ? pmu.isVbusIn() : true; }
 
 void pwrSetup() {
   if (!pmuOk) return;
