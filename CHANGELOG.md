@@ -6,6 +6,39 @@ bottom of the clock/settings screen (swipe down) and `web/manifest.json`.
 Updating from the [web installer](https://socquique.github.io/TamaPoke/web/)
 **without** ticking "Erase device" keeps your Pokémon.
 
+## [1.18] - 2026-10-27
+
+Three contributions from **ViezeVingertjes** (PRs #25, #26 and #27), merged together.
+
+### Added
+
+- **Battery percentage from a LiPo discharge curve** (`batcurve.h`). On battery
+  the figure comes from a typical single-cell curve over a smoothed voltage, and
+  only goes down while discharging, so the charge-inflated voltage right after
+  unplugging does not raise it. On USB or while charging the PMU's own gauge is
+  still used.
+- **Safe power-off.** When the smoothed voltage stays under 3.30 V for 30 s (and
+  not in the first 30 s after boot) the pet is saved and the PMU powers off. The
+  PMU is also set to cut at 3.1 V as a backstop. Assumes a 4.2 V LiPo/Li-ion
+  cell, like the one the board is designed for.
+- **Power policy** (`power.h`): the frame rate follows activity (10 fps in use,
+  down to 1 fps when the screen is almost off, 2 fps while the pet sleeps
+  untouched), static screens (keyboard, clock, card pages 2-4, starter choice)
+  are painted once, the speaker amplifier is off while the pet sleeps or the
+  screen is dimmed, and under 20 % battery the brightness is capped and frames
+  are slower. About 68 % fewer frames reach the panel over 10 idle minutes.
+- **Light sleep** with the screen off or almost off, on battery only. A touch
+  wakes it. Never with USB connected, so the serial port for the SD card stays
+  available.
+
+### Changed
+
+- Sprites are drawn as runs of equal pixels instead of one rectangle per pixel
+  (same output, far fewer draw calls), and `loop()` yields 1 ms on passes that
+  do not draw.
+- The pet walks by real time, so a lower frame rate does not slow it down.
+- Battery is read over I2C every 10 s instead of 2 s when the screen is off.
+
 ## [1.17] - 2026-09-18
 
 ### Added
