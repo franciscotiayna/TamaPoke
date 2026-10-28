@@ -53,8 +53,26 @@ static void testEconomy() {
   ck(!wildUseExplore(d) && d.explores == WILD_EXPLORES_PER_DAY, "5 busquedas por dia");
 }
 
+static void testCatch() {
+  ck(wildCatchValue(R_COMUN, 100, 100, AIL_NONE, AIM_OK) == 15, "comun a vida llena: 15");
+  ck(wildCatchValue(R_COMUN, 1, 100, AIL_NONE, AIM_OK) == 44, "comun a 1 PS: 44");
+  ck(wildCatchValue(R_COMUN, 1, 100, AIL_SLEEP, AIM_PERFECT) == 176, "dormido y perfecto: x4");
+  ck(wildCatchValue(R_RARO, 100, 100, AIL_PARA, AIM_GOOD) == 18, "raro, paralizado y bien: 8 x3/2 x3/2");
+  ck(wildCatchValue(R_LEGENDARIO, 100, 100, AIL_NONE, AIM_MISS) == 1, "nunca baja de 1");
+  ck(wildCatchValue(R_COMUN, 0, 0, AIL_SLEEP, AIM_PERFECT) == 180, "vida 0/0 no divide por cero");
+  ck(wildShakes(255) == 3, "a=255 siempre captura");
+  int caught = 0;
+  for (int i = 0; i < 2000; i++) if (wildShakes(1) == 3) caught++;
+  ck(caught == 0, "a=1 practicamente nunca captura");
+  ck(!wildFlees(1) && !wildFlees(2) && !wildFlees(3), "no huye en los 3 primeros fallos");
+  int fled = 0;
+  for (int i = 0; i < 4000; i++) if (wildFlees(4)) fled++;
+  ck(fled > 800 && fled < 1200, "desde el cuarto fallo huye ~25%");
+}
+
 int main() {
   testEconomy();
+  testCatch();
   printf(bad ? "%d FAILED\n" : "all passed\n", bad);
   return bad ? 1 : 0;
 }

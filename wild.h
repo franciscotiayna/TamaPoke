@@ -47,3 +47,13 @@ bool wildCanBuy(const WildState &w, uint8_t n);
 bool wildBuy(WildState &w, uint8_t n);         // false = no alcanza o pasaria del tope
 uint16_t wildCareCoins(uint16_t streak);       // premio del primer cuidado del dia
 bool wildUseExplore(WildState &w);             // gasta una busqueda; false si no quedan
+
+// Valor de captura 1..255, al estilo de los juegos:
+//   tasa x (3*hpMax - 2*hp) / (3*hpMax) x estado x punteria
+// tasa: comun 45, raro 25, legendario 3. Dormido/congelado x2, paralizado,
+// quemado o envenenado x3/2. Punteria: perfecto x2, bien x3/2, fallo x1/2.
+uint8_t wildCatchValue(uint8_t tier, uint16_t hp, uint16_t maxHp, uint8_t ailment, uint8_t aim);
+// Tambaleos que aguanta la bola (0..3). 3 = capturado.
+uint8_t wildShakes(uint8_t a);
+// Tras un lanzamiento fallido: desde el cuarto fallo, 25% de que huya.
+bool wildFlees(uint8_t failedThrows);
