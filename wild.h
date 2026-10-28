@@ -1,0 +1,49 @@
+#pragma once
+#include <Arduino.h>
+#include "pet.h"
+#include "party.h"
+
+// Encuentros salvajes y captura. Solo logica, sin pantalla ni hardware, igual
+// que battle.cpp, para poder probarla entera en tools/emu. El azar sale de
+// random(), que el emulador siembra con g_seed.
+
+#define WILD_EXPLORES_PER_DAY 5    // busquedas a demanda (fila EXPLORAR)
+#define WILD_AMBIENT_PER_DAY 3     // avisos espontaneos "!"
+#define WILD_BALL_PRICE 10         // monedas por Pokeball
+#define WILD_BALLS_MAX 50
+#define WILD_COINS_MAX 9999
+#define WILD_START_BALLS 5
+#define WILD_START_COINS 50
+#define WILD_EVOLVED_PCT 30        // un salvaje con nivel de sobra sale evolucionado
+#define WILD_LEGEND_PCT 1
+#define WILD_LEGEND_MIN_REG 25     // igual que los huevos: legendarios desde 25 registrados
+
+// punteria del anillo al lanzar la bola
+enum : uint8_t { AIM_MISS = 0, AIM_OK, AIM_GOOD, AIM_PERFECT };
+
+struct WildMon {
+  int16_t dex = 0;
+  uint8_t level = 1;
+  uint8_t tier = R_COMUN;     // R_COMUN / R_RARO / R_LEGENDARIO: fija la tasa de captura
+  bool shiny = false;
+  uint8_t ivAtk = 16, ivDef = 16, ivSpe = 16, ivHp = 16;
+};
+
+// Monedas, bolas y contadores del dia. Del jugador, como la racha: sobrevive a
+// todas las crianzas.
+struct WildState {
+  uint16_t coins = WILD_START_COINS;
+  uint8_t balls = WILD_START_BALLS;
+  uint8_t explores = 0;       // busquedas gastadas hoy
+  uint8_t ambient = 0;        // avisos espontaneos de hoy
+  uint32_t day = 0;           // dia (epoch / 86400) de esos dos contadores
+  uint32_t paidCareDay = 0;   // ultimo "primer cuidado del dia" ya pagado
+  uint16_t paidMedals = 0;    // pet.totalMedals ya pagadas
+};
+
+void wildNewDay(WildState &w, uint32_t day);   // repone contadores si cambio el dia
+void wildEarn(WildState &w, uint16_t coins);   // suma con tope
+bool wildCanBuy(const WildState &w, uint8_t n);
+bool wildBuy(WildState &w, uint8_t n);         // false = no alcanza o pasaria del tope
+uint16_t wildCareCoins(uint16_t streak);       // premio del primer cuidado del dia
+bool wildUseExplore(WildState &w);             // gasta una busqueda; false si no quedan
