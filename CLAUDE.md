@@ -43,10 +43,12 @@ arduino-cli compile --fqbn "esp32:esp32:esp32s3:CDCOnBoot=cdc,FlashSize=32M,PSRA
   El primer arranque formatea la FAT; después hay que subir los sprites.
 
 ## Sprites
-`python tools/send_sd.py --port COMx --no-shiny` sube `tools/sdcard/mons/`
-(151 normales + `thumbs.bin`, ~21 MB, ~4 min) por el protocolo PUT. Los shinies
-(otros ~21 MB) no caben; el firmware usa el sprite normal en su lugar. Mientras
-dura un PUT el bucle del juego está bloqueado (el táctil no responde).
+`python tools/send_sd.py --port COMx` sube `tools/sdcard/mons/` (151 normales +
+151 shinies + `thumbs.bin`) por el protocolo PUT. Los TPK2 se mandan comprimidos
+con zlib (`TPKZ`: "TPKZ" + uint32 tamaño + zlib) y `PmdMon::load()` los
+descomprime en PSRAM con el miniz de la ROM: ~41 MB quedan en ~1,9 MB de FAT.
+`--raw` los manda sin comprimir (firmware viejo). Mientras dura un PUT el bucle
+del juego está bloqueado (el táctil no responde).
 
 ## Consola serie (115200)
 Abrir el puerto con DTR/RTS a False o la placa se reinicia. Comandos útiles,

@@ -2,6 +2,7 @@
 #include "pin_config.h"
 #include <FS.h>
 #include <FFat.h>
+#include <miniz.h>  // tinfl de la ROM del ESP32-S3 (sprites TPKZ)
 
 // La 1.75C no tiene microSD: los sprites viven en la particion FAT "ffat" de la
 // flash interna (partitions.csv). Se graba una imagen ya rellena desde el PC
@@ -11,6 +12,26 @@
 bool sdReady = false;
 bool sdDirty = false;
 SdThumbs thumbs;
+
+// Descomprime un TPKZ: "TPKZ" + uint32 tamano descomprimido + flujo zlib.
+// Usa el miniz de la ROM. El tinfl_decompressor (~11 KB) va al heap: en la pila
+// de loop() no cabe. Devuelve el TPK2 en PSRAM o nullptr si falla.
+static uint8_t *tpkzInflate(const uint8_t *src, uint32_t srcLen, uint32_t *outLen) {
+  uint32_t rawLen;
+  memcpy(&rawLen, src + 4, 4);
+  if (rawLen < 7 || rawLen > 3UL * 1024 * 1024) return nullptr;
+  uint8_t *out = (uint8_t *)ps_malloc(rawLen);
+  tinfl_decompressor *d = (tinfl_decompressor *)malloc(sizeof(tinfl_decompressor));
+  if (!out || !d) { free(out); free(d); return nullptr; }
+  tinfl_init(d);
+  size_t inBytes = srcLen - 8, outBytes = rawLen;
+  tinfl_status st = tinfl_decompress(d, src + 8, &inBytes, out, out, &outBytes,
+                                     TINFL_FLAG_PARSE_ZLIB_HEADER | TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+  free(d);
+  if (st != TINFL_STATUS_DONE || outBytes != rawLen) { free(out); return nullptr; }
+  *outLen = rawLen;
+  return out;
+}
 
 bool PmdMon::load(uint8_t dexNum, bool shiny) {
   unload();
@@ -28,12 +49,20 @@ bool PmdMon::load(uint8_t dexNum, bool shiny) {
   uint32_t size = f.size();
   if (size < 7 || size > 3UL * 1024 * 1024) { f.close(); return false; }
   blob = (uint8_t *)ps_malloc(size);
-  if (!blob || f.read(blob, size) != size || memcmp(blob, "TPK2", 4) != 0) {
+  if (!blob || f.read(blob, size) != size) {
     if (blob) { free(blob); blob = nullptr; }
     f.close();
     return false;
   }
   f.close();
+  // TPKZ = TPK2 comprimido con zlib (tools/send_sd.py): asi caben los shinies en la FAT
+  if (size >= 8 && memcmp(blob, "TPKZ", 4) == 0) {
+    uint8_t *raw = tpkzInflate(blob, size, &size);
+    free(blob);
+    blob = raw;
+    if (!blob) { Serial.printf("%s: TPKZ corrupto\n", path); return false; }
+  }
+  if (size < 7 || memcmp(blob, "TPK2", 4) != 0) { unload(); return false; }
 
   uint8_t nActs = blob[4];
   memcpy(&palCount, blob + 5, 2);
