@@ -12,8 +12,10 @@ void pmuEnablePanel();           // enciende BLDO1 (OLED VDD 3.3V); llamar antes
 int batPercent();                // 0-100, -1 si no hay bateria conectada
 bool batCharging();
 bool usbPresent();
+void batPowerOff();              // apagado fisico del PMU
 
-// boton PWR del AXP2101: pulsacion larga 4s = apagado fisico (RTC sigue vivo);
-// la pulsacion corta la captura el firmware (pantalla on/off)
+// boton PWR del AXP2101: corta = pantalla on/off, larga (2,5 s) = suspender
+// (lo hace el firmware), 10 s = apagado fisico del PMU (emergencia)
+enum : uint8_t { PWR_NONE = 0, PWR_SHORT, PWR_LONG };
 void pwrSetup();
-bool pwrShortPressed();  // sondear en el loop
+uint8_t pwrPoll();  // sondear en el loop

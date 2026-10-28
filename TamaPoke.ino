@@ -1,5 +1,5 @@
 // TamaPoke - tamagotchi pixel art inspirado en la gen 1
-// para Waveshare ESP32-S3-Touch-AMOLED-1.75
+// para Waveshare ESP32-S3-Touch-AMOLED-1.75C (port de la rama board-1.75c)
 //
 // Librerias (Library Manager o repo de Waveshare):
 //   - "GFX Library for Arduino" (moononournation), con soporte CO5300 QSPI
@@ -13,6 +13,9 @@
 #include <Wire.h>
 #include "Arduino_GFX_Library.h"
 #include "TouchDrvCSTXXX.hpp"
+#include <esp_sleep.h>
+#include <driver/gpio.h>
+#include <driver/rtc_io.h>
 #include "pin_config.h"
 #include "species.h"
 #include "dex.h"
@@ -692,12 +695,21 @@ void setup() {
   // reloj real: aplica el tiempo que estuvo apagado
   rtcBegin();
   batBegin();
-  pwrSetup();
+  resumeFromSuspend();
+  pwrSetup();  // despues: limpia el aviso de la pulsacion que desperto la placa
   uint32_t e = rtcEpoch();
   if (e == 0) {
-    rtcSetEpoch(1767225600UL);  // RTC virgen: semilla (la hora absoluta da igual,
-    e = rtcEpoch();             // solo importan las diferencias)
-    Serial.println("RTC sin hora: sembrado, sin progresion offline esta vez");
+    // La 1.75C no tiene RTC: tras un corte de energia el reloj vuelve a 0.
+    // Sembrar siempre la fecha fija haria RETROCEDER el tiempo de juego respecto
+    // a lo ya guardado (racha, edad, escena). Se siembra con la ultima hora vista
+    // si es posterior: los minutos apagado se pierden, pero nada se descuadra.
+    uint32_t seed = 1767225600UL;             // reloj virgen de verdad
+    uint32_t seen = pet.savedEpoch();
+    if (seen > seed) seed = seen;
+    rtcSetEpoch(seed);
+    e = rtcEpoch();
+    Serial.printf("RTC sin hora: sembrado en %u%s\n", seed,
+                  seen > 1767225600UL ? " (desde la ultima hora guardada)" : "");
   }
   pet.syncClock(e);
 
@@ -785,10 +797,13 @@ void loop() {
   static uint32_t lastPwr = 0;
   if (now - lastPwr > 250) {
     lastPwr = now;
-    if (pwrShortPressed()) {
+    uint8_t ev = pwrPoll();
+    if (ev == PWR_SHORT) {
       screenOff = !screenOff;
       pet.setScreenOff(screenOff);   // asleep only if it is also night
       if (!screenOff) lastInteract = now;
+    } else if (ev == PWR_LONG) {
+      suspend();  // no vuelve salvo si cae al apagado fisico
     }
   }
 
@@ -826,6 +841,75 @@ void loop() {
     lastRender = now;
     render();
   }
+}
+
+// ---------- suspension (pulsacion larga del PWR) ----------
+// La 1.75C no tiene RTC: si el PMU corta la energia, la hora se pierde. En vez de
+// apagar, se duerme el ESP32 en deep sleep: su temporizador sigue contando y al
+// despertar setup() aplica el tiempo transcurrido (pet.syncClock) como haria el RTC.
+// El 3V3 que alimenta panel/tactil/codec es el mismo del ESP32 y no se puede cortar,
+// asi que cada chip se manda a su modo de reposo.
+//
+// GPIO3 (medido en placa): en reposo T1 lo lleva a 0 V; pulsando, T1 se abre y la
+// linea queda flotando porque R9 (pull-up a 3V3) no viene montada. Con el pull-up
+// interno del ESP32 (tambien el de RTC durante el sueno, ~70 uA) se lee pulsada = 1.
+#define PWR_KEY_PRESSED HIGH
+
+void suspend() {
+  pet.setClock(rtcEpoch());  // guarda la partida con la hora de ahora
+
+  gfx->fillScreen(0x0000);  // aviso: luna y "z z"
+  gfx->fillCircle(233, 220, 46, UI_INK_NIGHT);
+  gfx->fillCircle(255, 202, 42, 0x0000);
+  gfx->setTextColor(UI_INK_NIGHT);
+  gfx->setTextSize(3);
+  gfx->setCursor(275, 160);
+  gfx->print("z");
+  gfx->setTextSize(2);
+  gfx->setCursor(300, 140);
+  gfx->print("z");
+  gfx->flush();
+  panel->setBrightness(120);
+
+  // se espera a que suelte (si no, despertaria al instante). Si sigue pulsada a
+  // los 8 s se esta manteniendo para el apagado de emergencia (10 s) o la linea no
+  // responde: en ambos casos se apaga de verdad, nunca se duerme sin poder despertar.
+  uint32_t t0 = millis();
+  while (digitalRead(PWR_KEY_IO) == PWR_KEY_PRESSED && millis() - t0 < 8000) delay(10);
+  delay(50);  // rebote
+  if (digitalRead(PWR_KEY_IO) == PWR_KEY_PRESSED) {
+    Serial.println("PWR: tecla sin soltar; apagado fisico");
+    panel->setBrightness(0);
+    batPowerOff();
+    return;
+  }
+  Serial.println("PWR: suspendiendo");
+  Serial.flush();
+
+  panel->setBrightness(0);
+  panel->displayOff();   // CO5300 en sleep-in
+  touch.sleep();         // CST9217 en reposo (setup lo resetea al despertar)
+  digitalWrite(PA, LOW); // amplificador apagado y fijado durante el sueno
+  gpio_hold_en((gpio_num_t)PA);
+  gpio_deep_sleep_hold_en();
+
+  esp_sleep_enable_ext0_wakeup((gpio_num_t)PWR_KEY_IO, PWR_KEY_PRESSED);
+  rtc_gpio_pullup_en((gpio_num_t)PWR_KEY_IO);  // sustituye a la R9 que falta
+  rtc_gpio_pulldown_dis((gpio_num_t)PWR_KEY_IO);
+  esp_deep_sleep_start();
+}
+
+// al arrancar tras una suspension: suelta los pines fijados y espera a que se
+// suelte la tecla que desperto, para que no llegue como pulsacion corta (pantalla off)
+void resumeFromSuspend() {
+  gpio_hold_dis((gpio_num_t)PA);
+  gpio_deep_sleep_hold_dis();
+  rtc_gpio_deinit((gpio_num_t)PWR_KEY_IO);  // el sueno lo dejo como pin RTC
+  pinMode(PWR_KEY_IO, INPUT_PULLUP);
+  if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_EXT0) return;
+  Serial.println("PWR: despertando de la suspension");
+  uint32_t t0 = millis();
+  while (digitalRead(PWR_KEY_IO) == PWR_KEY_PRESSED && millis() - t0 < 3000) delay(10);
 }
 
 // brillo segun sueno + inactividad (proteccion del AMOLED)
@@ -936,6 +1020,13 @@ void handleSerial() {
   } else if (line == "TIME") {
     Serial.printf("rtc=%u\n", rtcEpoch());
     Serial.println("DONE");
+  } else if (line == "KEYPIN") {  // diagnostico de la tecla PWR en GPIO3 (suspension)
+    int lvl = digitalRead(PWR_KEY_IO);
+    int mv = analogReadMilliVolts(PWR_KEY_IO);
+    pinMode(PWR_KEY_IO, INPUT_PULLUP);   delayMicroseconds(200); int pu = digitalRead(PWR_KEY_IO);
+    pinMode(PWR_KEY_IO, INPUT_PULLDOWN); delayMicroseconds(200); int pd = digitalRead(PWR_KEY_IO);
+    pinMode(PWR_KEY_IO, INPUT_PULLUP);
+    Serial.printf("key lvl=%d mv=%d pu=%d pd=%d\n", lvl, mv, pu, pd);
   } else if (line == "GAL") {
     galleryOpen = !galleryOpen;
     galleryDetail = 0;

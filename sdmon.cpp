@@ -3,12 +3,37 @@
 #include "pin_config.h"
 #include "pet.h"   // gRegionArt, REGIONS -- the mask this narrows
 #include <FS.h>
-#include <SD_MMC.h>
+#include <FFat.h>
+#include <miniz.h>  // tinfl de la ROM del ESP32-S3 (sprites TPKZ)
+
+// La 1.75C no tiene microSD: los sprites viven en la particion FAT "ffat" de la
+// flash interna (partitions.csv) y se suben por USB con tools/send_sd.py.
+#define SPRITE_FS FFat
 
 bool sdReady = false;
 bool sdDirty = false;
 bool sdArtDirty = false;
 SdThumbs thumbs;
+
+// Descomprime un TPKZ: "TPKZ" + uint32 tamano descomprimido + flujo zlib.
+// Usa el miniz de la ROM. El tinfl_decompressor (~11 KB) va al heap: en la pila
+// de loop() no cabe. Devuelve el TPK2 en PSRAM o nullptr si falla.
+static uint8_t *tpkzInflate(const uint8_t *src, uint32_t srcLen, uint32_t *outLen) {
+  uint32_t rawLen;
+  memcpy(&rawLen, src + 4, 4);
+  if (rawLen < 7 || rawLen > 3UL * 1024 * 1024) return nullptr;
+  uint8_t *out = (uint8_t *)ps_malloc(rawLen);
+  tinfl_decompressor *d = (tinfl_decompressor *)malloc(sizeof(tinfl_decompressor));
+  if (!out || !d) { free(out); free(d); return nullptr; }
+  tinfl_init(d);
+  size_t inBytes = srcLen - 8, outBytes = rawLen;
+  tinfl_status st = tinfl_decompress(d, src + 8, &inBytes, out, out, &outBytes,
+                                     TINFL_FLAG_PARSE_ZLIB_HEADER | TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+  free(d);
+  if (st != TINFL_STATUS_DONE || outBytes != rawLen) { free(out); return nullptr; }
+  *outLen = rawLen;
+  return out;
+}
 
 bool PmdMon::load(int16_t dexNum, bool shiny) {
   // int16_t, NOT uint8_t. The dex reached 386 and this did not follow, so
@@ -21,22 +46,30 @@ bool PmdMon::load(int16_t dexNum, bool shiny) {
 
   char path[28];
   snprintf(path, sizeof(path), "/mons/p%s%03u.bin", shiny ? "s" : "", (unsigned)dexNum);
-  File f = SD_MMC.open(path, FILE_READ);
+  File f = SPRITE_FS.open(path, FILE_READ);
   if (!f && shiny) {  // sin shiny PMD: usa el normal
     snprintf(path, sizeof(path), "/mons/p%03u.bin", (unsigned)dexNum);
-    f = SD_MMC.open(path, FILE_READ);
+    f = SPRITE_FS.open(path, FILE_READ);
   }
   if (!f) return false;
 
   uint32_t size = f.size();
   if (size < 7 || size > 3UL * 1024 * 1024) { f.close(); return false; }
   blob = (uint8_t *)ps_malloc(size);
-  if (!blob || f.read(blob, size) != size || memcmp(blob, "TPK2", 4) != 0) {
+  if (!blob || f.read(blob, size) != size) {
     if (blob) { free(blob); blob = nullptr; }
     f.close();
     return false;
   }
   f.close();
+  // TPKZ = TPK2 comprimido con zlib (tools/send_sd.py): asi caben los packs en la FAT
+  if (size >= 8 && memcmp(blob, "TPKZ", 4) == 0) {
+    uint8_t *raw = tpkzInflate(blob, size, &size);
+    free(blob);
+    blob = raw;
+    if (!blob) { Serial.printf("%s: TPKZ corrupto\n", path); return false; }
+  }
+  if (size < 7 || memcmp(blob, "TPK2", 4) != 0) { unload(); return false; }
 
   dex = dexNum;                  // what is actually in here, for the tests
   uint8_t nActs = blob[4];
@@ -95,7 +128,7 @@ void PmdMon::unload() {
 
 bool SdThumbs::load() {
   if (!sdReady) return false;
-  File f = SD_MMC.open("/mons/thumbs.bin", FILE_READ);
+  File f = SPRITE_FS.open("/mons/thumbs.bin", FILE_READ);
   if (!f) {
     Serial.println("sin thumbs.bin (galeria sin miniaturas)");
     return false;
@@ -143,7 +176,7 @@ void sdScanRegionArt(bool verbose) {
     for (int i = 0; i < 3 && all; i++) {
       char path[28];
       snprintf(path, sizeof(path), "/mons/p%03u.bin", (unsigned)probe[i]);
-      File f = SD_MMC.open(path, FILE_READ);
+      File f = SPRITE_FS.open(path, FILE_READ);
       if (!f) all = false; else f.close();
     }
     if (all) mask |= (uint16_t)(1u << r);
@@ -154,14 +187,14 @@ void sdScanRegionArt(bool verbose) {
 }
 
 bool sdBegin() {
-  SD_MMC.setPins(SDMMC_CLK, SDMMC_CMD, SDMMC_DATA);
-  sdReady = SD_MMC.begin("/sdcard", true /* modo 1-bit */, true /* formatea si no monta */);
+  sdReady = SPRITE_FS.begin(true /* formatea si no monta */, "/ffat", 4, "ffat");
   if (sdReady) {
-    Serial.printf("SD montada: %llu MB\n", SD_MMC.cardSize() / (1024ULL * 1024ULL));
-    SD_MMC.mkdir("/mons");
+    Serial.printf("FAT interna montada: %u/%u KB usados\n",
+                  (unsigned)(SPRITE_FS.usedBytes() / 1024), (unsigned)(SPRITE_FS.totalBytes() / 1024));
+    SPRITE_FS.mkdir("/mons");
     sdScanRegionArt();
   } else {
-    Serial.println("SD no detectada (el juego usa los sprites de flash)");
+    Serial.println("particion ffat no montada (el juego usa los sprites de flash)");
   }
   return sdReady;
 }
@@ -173,10 +206,10 @@ bool SdMon::load(int16_t dexNum, bool shiny) {
 
   char path[24];
   snprintf(path, sizeof(path), "/mons/%s%03u.bin", shiny ? "s" : "", (unsigned)dexNum);
-  File f = SD_MMC.open(path, FILE_READ);
+  File f = SPRITE_FS.open(path, FILE_READ);
   if (!f && shiny) {  // sin variante shiny: usa la normal
     snprintf(path, sizeof(path), "/mons/%03u.bin", (unsigned)dexNum);
-    f = SD_MMC.open(path, FILE_READ);
+    f = SPRITE_FS.open(path, FILE_READ);
   }
   if (!f) {
     Serial.printf("no existe %s\n", path);
@@ -256,7 +289,14 @@ bool sdSerialCommand(const String &line) {
       return true;
     }
     if (!path.startsWith("/")) path = "/" + path;
-    File f = SD_MMC.open(path, FILE_WRITE);
+    // acota la escritura a /mons/ (la ruta llega sin sanear por la linea serie)
+    if (!path.startsWith("/mons/") || path.indexOf("..") >= 0) {
+      Serial.println("ERR");
+      return true;
+    }
+    // reemplaza en vez de anadir: un reintento no debe alargar un fichero a medias
+    if (SPRITE_FS.exists(path)) SPRITE_FS.remove(path);
+    File f = SPRITE_FS.open(path, FILE_WRITE);
     if (!f) {
       Serial.println("ERR");
       return true;
@@ -283,8 +323,13 @@ bool sdSerialCommand(const String &line) {
     if (remaining == 0) sdArtDirty = true;
     Serial.println(remaining == 0 ? "DONE" : "ERR");
     return true;
+  } else if (line == "SDINFO") {  // uso de la FAT interna
+    Serial.printf("total=%llu used=%llu\n", (unsigned long long)SPRITE_FS.totalBytes(),
+                  (unsigned long long)SPRITE_FS.usedBytes());
+    Serial.println("DONE");
+    return true;
   } else if (line == "LS") {
-    File dir = SD_MMC.open("/mons");
+    File dir = SPRITE_FS.open("/mons");
     if (dir) {
       File e;
       while ((e = dir.openNextFile())) {
