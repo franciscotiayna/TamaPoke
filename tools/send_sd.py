@@ -4,6 +4,7 @@
   python3 tools/send_sd.py                  # envia tools/sdcard/mons/*.bin
   python3 tools/send_sd.py --port /dev/cu.usbmodem101
   python3 tools/send_sd.py --ls             # lista lo que hay en la SD
+  python3 tools/send_sd.py --no-shiny       # sin pNNN shiny (1.75C: no caben en la flash)
 """
 import argparse
 import glob
@@ -14,8 +15,11 @@ import serial
 
 def find_port():
     ports = glob.glob('/dev/cu.usbmodem*')
+    if not ports:  # Windows/Linux: el USB nativo del ESP32-S3 (VID 0x303A)
+        from serial.tools import list_ports
+        ports = [p.device for p in list_ports.comports() if p.vid == 0x303A]
     if not ports:
-        sys.exit("no encuentro la placa (/dev/cu.usbmodem*)")
+        sys.exit("no encuentro la placa (/dev/cu.usbmodem* o VID 303A)")
     return ports[0]
 
 def wait_line(ser, expect, timeout=10):
@@ -35,6 +39,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--port')
     ap.add_argument('--ls', action='store_true')
+    ap.add_argument('--no-shiny', action='store_true', help='omite los ps*.bin')
     args = ap.parse_args()
 
     port = args.port or find_port()
@@ -49,6 +54,8 @@ def main():
         return
 
     files = sorted(glob.glob(os.path.join(os.path.dirname(__file__), 'sdcard', 'mons', '*.bin')))
+    if args.no_shiny:
+        files = [f for f in files if not os.path.basename(f).startswith('ps')]
     if not files:
         sys.exit("no hay .bin; ejecuta antes tools/pack_pmd.py")
 

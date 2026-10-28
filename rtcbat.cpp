@@ -3,6 +3,7 @@
 #include "pin_config.h"  // define XPOWERS_CHIP_AXP2101
 #include <Wire.h>
 #include <time.h>
+#include <sys/time.h>
 #include <SensorPCF85063.hpp>
 #include <XPowersLib.h>
 
@@ -11,13 +12,26 @@ static XPowersPMU pmu;
 static bool rtcOk = false;
 static bool pmuOk = false;
 
+// La 1.75C no lleva PCF85063: sin el chip, la hora la lleva el reloj del sistema
+// del ESP32 (sobrevive a los reinicios por software, no a un corte de energia).
+// setup() ya siembra la hora con la ultima guardada en NVS cuando llega a 0, asi
+// que el tiempo nunca va hacia atras; lo que se pierde es el tiempo apagado.
+static bool sysClock = false;
+
 bool rtcBegin() {
   rtcOk = rtc.begin(Wire, IIC_SDA, IIC_SCL);
-  if (!rtcOk) Serial.println("PCF85063 no detectado");
+  if (!rtcOk) {
+    sysClock = true;
+    Serial.println("PCF85063 no detectado: hora por reloj del sistema");
+  }
   return rtcOk;
 }
 
 uint32_t rtcEpoch() {
+  if (sysClock) {
+    time_t now = time(nullptr);
+    return now >= 1735689600 ? (uint32_t)now : 0;  // antes de 2025 = sin hora valida
+  }
   if (!rtcOk) return 0;
   RTC_DateTime t = rtc.getDateTime();
   if (t.getYear() < 2025 || t.getYear() > 2120) return 0;  // sin hora valida
@@ -33,6 +47,11 @@ uint32_t rtcEpoch() {
 }
 
 void rtcSetEpoch(uint32_t e) {
+  if (sysClock) {
+    struct timeval tv = {(time_t)e, 0};
+    settimeofday(&tv, nullptr);
+    return;
+  }
   if (!rtcOk) return;
   time_t tt = e;
   struct tm tmv;
@@ -107,16 +126,20 @@ bool usbPresentNow() { return pmuOk ? pmu.isVbusIn() : true; }
 
 void pwrSetup() {
   if (!pmuOk) return;
-  pmu.setPowerKeyPressOffTime(XPOWERS_POWEROFF_4S);
+  // 2,5 s = aviso de pulsacion larga (el firmware suspende); el corte fisico se
+  // aleja a 10 s y queda como apagado de emergencia si el juego se cuelga
+  pmu.setIrqLevelTime(XPOWERS_AXP2101_PRESSOFF_2S5);
+  pmu.setPowerKeyPressOffTime(XPOWERS_POWEROFF_10S);
   pmu.disableIRQ(XPOWERS_AXP2101_ALL_IRQ);
-  pmu.enableIRQ(XPOWERS_AXP2101_PKEY_SHORT_IRQ);
-  pmu.clearIrqStatus();
+  pmu.enableIRQ(XPOWERS_AXP2101_PKEY_SHORT_IRQ | XPOWERS_AXP2101_PKEY_LONG_IRQ);
+  pmu.clearIrqStatus();  // descarta la pulsacion que desperto/encendio la placa
 }
 
-bool pwrShortPressed() {
-  if (!pmuOk) return false;
+uint8_t pwrPoll() {
+  if (!pmuOk) return PWR_NONE;
   pmu.getIrqStatus();
-  bool hit = pmu.isPekeyShortPressIrq();
-  if (hit) pmu.clearIrqStatus();
-  return hit;
+  uint8_t ev = pmu.isPekeyLongPressIrq() ? PWR_LONG
+             : pmu.isPekeyShortPressIrq() ? PWR_SHORT : PWR_NONE;
+  if (ev) pmu.clearIrqStatus();
+  return ev;
 }
