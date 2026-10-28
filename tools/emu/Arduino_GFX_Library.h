@@ -22,6 +22,7 @@ class Arduino_CO5300 {
 public:
   Arduino_CO5300(Arduino_DataBus *, int, int, int, int, int, int, int, int) {}
   void setBrightness(uint8_t b) { brightness = b; }
+  void displayOff() {}
   uint8_t brightness = 255;
 };
 

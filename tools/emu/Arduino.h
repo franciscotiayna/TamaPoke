@@ -15,6 +15,9 @@
 #define INPUT 0
 #define OUTPUT 1
 #define FALLING 2
+#define HIGH 1
+#define LOW 0
+#define INPUT_PULLDOWN 3
 #ifndef PI
 #define PI 3.1415926535897932384626433832795
 #endif
@@ -30,6 +33,10 @@ inline void delay(uint32_t ms) {
   (void)ms;
 }
 inline void pinMode(int, int) {}
+inline void digitalWrite(int, int) {}
+inline int digitalRead(int) { return LOW; }   // la tecla PWR nunca esta pulsada en el PC
+inline void delayMicroseconds(uint32_t) {}
+inline int analogReadMilliVolts(int) { return 0; }
 inline int digitalPinToInterrupt(int p) { return p; }
 
 // There is no interrupt controller here, so the handler is kept in a slot and
@@ -99,6 +106,7 @@ struct FakeSerial {
   String readStringUntil(char);
   size_t readBytes(uint8_t *, size_t) { return 0; }
   template <typename... A> void printf(const char *f, A... a) { std::printf(f, a...); fflush(stdout); }
+  void flush() { fflush(stdout); }
   void println(const char *s = "") { std::printf("%s\n", s); fflush(stdout); }
   void println(int v) { std::printf("%d\n", v); fflush(stdout); }
   void print(const char *s) { std::printf("%s", s); fflush(stdout); }

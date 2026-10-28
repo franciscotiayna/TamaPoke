@@ -41,7 +41,7 @@ static uint8_t *slurp(const std::string &path, uint32_t *size) {
 bool PmdMon::load(int16_t dexNum, bool shiny) {
   if (dexNum < 1 || dexNum > 999) return false;
   unload();
-  char p[64];
+  char p[512];   // 64 truncaba rutas absolutas largas (p. ej. C:/Users/.../tools/sdcard/mons/p258.bin)
   snprintf(p, sizeof(p), "%s/p%s%03u.bin", g_spriteDir.c_str(), shiny ? "s" : "", (unsigned)dexNum);
   uint32_t size = 0;
   blob = slurp(p, &size);
@@ -128,7 +128,8 @@ int batPercent() { return 87; }
 bool batCharging() { return false; }
 bool usbPresent() { return true; }
 void pwrSetup() {}
-bool pwrShortPressed() { return false; }
+uint8_t pwrPoll() { return 0; }   // PWR_NONE: en el PC no hay tecla
+void batPowerOff() {}
 
 // --- audio (silent) ---
 void audioBegin() {}

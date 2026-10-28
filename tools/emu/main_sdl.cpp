@@ -11,7 +11,12 @@
 #include <string>
 #include <deque>
 #include <unistd.h>
+#ifdef _WIN32
+#include <thread>
+#include <mutex>
+#else
 #include <sys/select.h>
+#endif
 
 // --- Arduino runtime globals ---
 uint32_t g_seed = 0xC0FFEE;
@@ -27,6 +32,29 @@ void FakeESP::restart() { Serial.println("emu: ESP.restart() -> exiting"); exit(
 // --- stdin-backed serial ---
 static std::deque<std::string> g_lines;
 static std::string g_partial;
+#ifdef _WIN32
+// MinGW has no sys/select.h (and select() only handles sockets there), so a
+// reader thread feeds the same line queue instead.
+static void pumpStdin() {
+  static std::mutex mx;
+  static std::deque<std::string> in;
+  static bool started = false;
+  if (!started) {
+    started = true;
+    std::thread([] {
+      char buf[512];
+      while (fgets(buf, sizeof(buf), stdin)) {
+        std::string l(buf);
+        while (!l.empty() && (l.back() == '\n' || l.back() == '\r')) l.pop_back();
+        std::lock_guard<std::mutex> g(mx);
+        in.push_back(l);
+      }
+    }).detach();
+  }
+  std::lock_guard<std::mutex> g(mx);
+  while (!in.empty()) { g_lines.push_back(in.front()); in.pop_front(); }
+}
+#else
 static void pumpStdin() {
   fd_set fds;
   FD_ZERO(&fds);
@@ -43,6 +71,7 @@ static void pumpStdin() {
     FD_ZERO(&fds); FD_SET(0, &fds); tv = { 0, 0 };
   }
 }
+#endif
 // --- simulating a crash ---
 //
 // The board keeps its breadcrumb in RTC memory, which survives a panic but not

@@ -11,6 +11,7 @@ public:
   void setPins(int, int) {}
   bool begin(class FakeWire &, uint8_t, int, int) { return true; }
   void reset() {}
+  void sleep() {}
   void setMaxCoordinates(int, int) {}
   void setMirrorXY(bool, bool) {}
   uint8_t getPoint(int16_t *x, int16_t *y, uint8_t) {
