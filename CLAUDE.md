@@ -55,4 +55,8 @@ GPIO3/tecla PWR), `TIME`, `STATS`, `HEALTH`.
 
 ## Pendiente
 - Medir el consumo en suspensión con batería (sin USB).
-- El instalador web (`web/`) sigue apuntando a la 1.75 original.
+
+## Flujo de trabajo
+Sesiones locales con la placa por USB: Claude compila y graba directamente con
+`esptool` (no se usa el instalador web de `web/`, que sigue apuntando a la 1.75
+original). Detectar el puerto por VID 0x303A antes de grabar.
