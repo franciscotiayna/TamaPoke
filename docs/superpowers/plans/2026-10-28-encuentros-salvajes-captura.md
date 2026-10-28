@@ -2321,6 +2321,17 @@ git commit -m "Equipo: CRIAR intercambia con la mascota actual; huevo apartado"
 **Files:**
 - Modify: `CLAUDE.md` (del worktree)
 
+- [ ] **Step 0: Copia de seguridad antes de grabar (obligatorio)** — lee la flash entera (partida, firmware y sprites) a `C:\Users\Tarrito\Documents\TamaPoke-backups\` y guarda su SHA-256. No se graba nada sin esta copia:
+
+```bash
+cd /c/Users/Tarrito/Documents/TamaPoke-backups
+F="flash-1.75c-$(date +%Y%m%d-%H%M).bin"
+python -m esptool --port COM5 --baud 921600 read-flash 0 0x2000000 "$F"
+sha256sum "$F" > "$F.sha256"
+```
+
+Para restaurarla: `python -m esptool --port COM5 --baud 921600 write-flash 0x0 <fichero>.bin`.
+
 - [ ] **Step 1: Compilar y grabar** (placa por USB). Detecta el puerto en PowerShell con `Get-PnpDevice -PresentOnly | Where-Object { $_.InstanceId -match 'VID_303A&PID_1001&MI_00' }` (en esta placa ha sido COM5) y graba:
 
 ```bash
