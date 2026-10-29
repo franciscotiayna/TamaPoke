@@ -111,6 +111,7 @@ public:
   // either taken a party slot or been let go. Only farewell and release fill
   // it; a runaway leaves endedKind at CER_NONE and the pet is simply gone.
   PartyMon endedMon;
+  PartyLife endedLife;          // la vida de endedMon (party.h)
   uint8_t endedKind = CER_NONE;
   // Pokedex bitmaps, one bit per species. Widening these is SAFE on an existing
   // save: getBytes() copies only what was stored, and the array is zeroed by its
@@ -201,6 +202,12 @@ public:
   // Lo capturado cuenta en la Pokedex como lo criado. registerSpecies() mira
   // el shiny de la mascota activa, que aqui no es el capturado.
   void registerCaught(int16_t dex, bool shinyMon);
+  // CRIAR a demanda. bankFull() vuelca la mascota entera (combate y vida) para
+  // guardarla en el equipo; raiseFrom() pone a criar un guardado. A diferencia
+  // de reviveFrom(), el que vuelve CRECE: envejece, evoluciona y puede
+  // despedirse. Las necesidades se restauran; todo lo demas vuelve tal cual.
+  void bankFull(PartyMon &m, PartyLife &l) const;
+  void raiseFrom(const PartyMon &m, const PartyLife &l);
 
   // The player's own name, alongside the badges and the streak: it belongs to
   // whoever is playing, not to the creature, so newEgg() must never clear it.
@@ -469,6 +476,7 @@ private:
   uint8_t ivFromGene(uint8_t gene) const;  // migracion de guardados con genes
   void defTick(bool resting);       // la calma forja la defensa (ver pet.cpp)
   void snapshotForParty();          // copy into endedMon before newEgg() wipes it
+  void applyRevive(const PartyMon &m);  // reviveFrom() sin el save(), para raiseFrom()
   void checkMedals();
   void tick();
   void applyAutoSleep();

@@ -250,6 +250,11 @@ void Pet::tick() {
 // Brings a banked creature back as the live pet, frozen.
 void Pet::reviveFrom(const PartyMon &m) {
   if (m.empty()) return;
+  applyRevive(m);
+  save();
+}
+
+void Pet::applyRevive(const PartyMon &m) {
   ceremony = CER_NONE;
   neglectTicks = 0;
   speciesId = m.dex;
@@ -279,6 +284,60 @@ void Pet::reviveFrom(const PartyMon &m) {
   strncpy(nick, m.nick, sizeof(nick) - 1);
   nick[sizeof(nick) - 1] = 0;
   registerSpecies(speciesId);
+}
+
+void Pet::bankFull(PartyMon &m, PartyLife &l) const {
+  m = PartyMon();
+  l = PartyLife();
+  if (isEgg()) return;
+  m.dex = speciesId;
+  m.level = level();
+  m.medals = medals;
+  m.ivAtk = ivAtk; m.ivDef = ivDef; m.ivSpe = ivSpe; m.ivHp = ivHp;
+  m.trAtk = trAtk; m.trDef = trDef; m.trSpe = trSpe;
+  m.shiny = shiny ? 1 : 0;
+  for (int i = 0; i < MOVE_SLOTS; i++) m.moves[i] = moves[i];
+  strncpy(m.nick, nick, sizeof(m.nick) - 1);
+  m.nick[sizeof(m.nick) - 1] = 0;
+  l.valid = 1;
+  l.ageMinutes = ageMinutes;
+  l.bond = bond;
+  l.bondToday = bondToday;
+  l.weight = weight;
+  l.careMistakes = careMistakes;
+  l.mistakeCooldown = mistakeCooldown;
+  l.berryKnown = berryKnown ? 1 : 0;
+  l.lastLearnLevel = lastLearnLevel;
+  l.evoPen = evoPen;
+  l.evoDeclinedLv = evoDeclinedLv;
+  l.goodTicks = goodTicks;
+  l.farDeclinedAge = farDeclinedAge;
+}
+
+void Pet::raiseFrom(const PartyMon &m, const PartyLife &l) {
+  if (m.empty()) return;
+  applyRevive(m);          // especie, IVs, entrenamiento, movimientos, apodo, necesidades
+  frozen = false;          // criar de verdad
+  retirePending = false;
+  if (l.valid) {
+    ageMinutes = l.ageMinutes;
+    bond = l.bond;
+    bondToday = l.bondToday;
+    weight = l.weight;
+    careMistakes = l.careMistakes;
+    mistakeCooldown = l.mistakeCooldown;
+    berryKnown = l.berryKnown != 0;
+    lastLearnLevel = l.lastLearnLevel;
+    evoPen = l.evoPen;
+    evoDeclinedLv = l.evoDeclinedLv;
+    goodTicks = l.goodTicks;
+    farDeclinedAge = l.farDeclinedAge;
+  } else {                 // guardado de antes de PartyLife: lo que no sabemos, a cero
+    evoPen = 0;
+    evoDeclinedLv = 0;
+    goodTicks = 0;
+    farDeclinedAge = 0;
+  }
   save();
 }
 
@@ -293,21 +352,7 @@ void Pet::snapshotForParty() {
   // what this depends on, so retire_test drives the real update() rather than
   // calling the two halves by hand.
   if (retireIsEarly()) return;
-  endedMon = PartyMon();
-  endedMon.dex = speciesId;
-  endedMon.level = level();
-  endedMon.medals = medals;
-  endedMon.ivAtk = ivAtk;
-  endedMon.ivDef = ivDef;
-  endedMon.ivSpe = ivSpe;
-  endedMon.ivHp = ivHp;
-  endedMon.trAtk = trAtk;
-  endedMon.trDef = trDef;
-  endedMon.trSpe = trSpe;
-  endedMon.shiny = shiny ? 1 : 0;
-  for (int i = 0; i < MOVE_SLOTS; i++) endedMon.moves[i] = moves[i];  // frozen too
-  strncpy(endedMon.nick, nick, sizeof(endedMon.nick) - 1);
-  endedMon.nick[sizeof(endedMon.nick) - 1] = 0;
+  bankFull(endedMon, endedLife);
   endedKind = ceremony;
 }
 

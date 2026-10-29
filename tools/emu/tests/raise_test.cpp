@@ -50,8 +50,38 @@ static void testPartyLife() {
   party.releaseAt(0);
 }
 
+static void testBankRaise() {
+  Pet p;
+  p.begin();
+  p.dbgHatchAs(4, false);
+  p.ageMinutes = 900; p.bond = 55; p.weight = 12; p.berryKnown = true;
+  p.careMistakes = 2; p.trAtk = 9; p.medals = 3;
+  strcpy(p.nick, "FUEGO");
+  PartyMon m; PartyLife l;
+  p.bankFull(m, l);
+  ck(m.dex == 4 && m.trAtk == 9 && m.medals == 3 && !strcmp(m.nick, "FUEGO"), "bankFull guarda lo de combate");
+  ck(l.valid && l.ageMinutes == 900 && l.bond == 55 && l.weight == 12 && l.berryKnown && l.careMistakes == 2,
+     "bankFull guarda la vida");
+
+  p.dbgHatchAs(1, false);
+  p.fullness = 5; p.poops = 3;
+  p.raiseFrom(m, l);
+  ck(p.speciesId == 4 && p.ageMinutes == 900 && p.bond == 55 && p.weight == 12 &&
+     p.berryKnown && p.careMistakes == 2 && p.trAtk == 9, "raiseFrom la devuelve tal cual");
+  ck(!p.frozen, "y crece: no queda congelada");
+  ck(p.fullness == 80 && p.joy == 80 && p.energy == 80 && p.hygiene == 100 && p.poops == 0,
+     "necesidades restauradas");
+
+  PartyMon old;
+  old.dex = 1; old.level = 30;
+  p.raiseFrom(old, PartyLife());
+  ck(p.speciesId == 1 && p.level() == 30 && p.bond == 0 && p.weight == 0 && !p.frozen,
+     "un guardado antiguo vuelve con la edad de su nivel");
+}
+
 int main() {
   testPartyLife();
+  testBankRaise();
   printf(bad ? "%d FAILED\n" : "all passed\n", bad);
   return bad ? 1 : 0;
 }
