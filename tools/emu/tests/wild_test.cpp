@@ -57,14 +57,26 @@ static void testEconomy() {
 static void testCatch() {
   ck(wildCatchValue(R_COMUN, 100, 100, AIL_NONE, AIM_OK) == 15, "comun a vida llena: 15");
   ck(wildCatchValue(R_COMUN, 1, 100, AIL_NONE, AIM_OK) == 44, "comun a 1 PS: 44");
-  ck(wildCatchValue(R_COMUN, 1, 100, AIL_SLEEP, AIM_PERFECT) == 176, "dormido y perfecto: x4");
+// 45*(300-2)*2*2/300 en una sola division = 178
+  ck(wildCatchValue(R_COMUN, 1, 100, AIL_SLEEP, AIM_PERFECT) == 178, "dormido y perfecto: x4");
   ck(wildCatchValue(R_RARO, 100, 100, AIL_PARA, AIM_GOOD) == 18, "raro, paralizado y bien: 8 x3/2 x3/2");
   ck(wildCatchValue(R_LEGENDARIO, 100, 100, AIL_NONE, AIM_MISS) == 1, "nunca baja de 1");
   ck(wildCatchValue(R_COMUN, 0, 0, AIL_SLEEP, AIM_PERFECT) == 180, "vida 0/0 no divide por cero");
   ck(wildShakes(255) == 3, "a=255 siempre captura");
-  int caught = 0;
-  for (int i = 0; i < 2000; i++) if (wildShakes(1) == 3) caught++;
-  ck(caught == 0, "a=1 practicamente nunca captura");
+  // una sola tirada decide: probabilidad a/255, no (a/255)^3
+  int c128 = 0;
+  for (int i = 0; i < 4000; i++) if (wildShakes(128) == 3) c128++;
+  ck(c128 > 1700 && c128 < 2300, "a=128 captura ~50% (a/255, no al cubo)");
+  int c1 = 0;
+  for (int i = 0; i < 25500; i++) if (wildShakes(1) == 3) c1++;
+  ck(c1 > 40 && c1 < 180, "a=1 captura ~1/255");
+  bool never3 = true, small = true;
+  for (int i = 0; i < 2000; i++) {
+    uint8_t s = wildShakes(0);
+    if (s == 3) never3 = false;
+    if (s > 2) small = false;
+  }
+  ck(never3 && small, "a=0 nunca captura y los tambaleos del fallo son 0..2");
   ck(!wildFlees(1) && !wildFlees(2) && !wildFlees(3), "no huye en los 3 primeros fallos");
   int fled = 0;
   for (int i = 0; i < 4000; i++) if (wildFlees(4)) fled++;
@@ -83,6 +95,8 @@ static void testRoll() {
     WildMon m;
     if (!wildRoll(p, m)) { rolled = false; break; }
     if (m.level < 17 || m.level > 23) lvOk = false;
+    // vale porque el nivel 17-23 esta por debajo de toda evolucion de Kanto
+    // que cruza de region (la mas baja es la 25)
     if (m.dex < rg.lo || m.dex > rg.hi) regOk = false;
     if (!speciesHasArt(m.dex)) artOk = false;
     if (m.tier == R_LEGENDARIO) noLegend = false;
@@ -110,6 +124,50 @@ static void testRoll() {
   }
   ck(legends > 10 && legends < 100, "con 25+ registrados, ~1% legendarios");
   ck(legLv, "el legendario sale a nivel 40 o mas");
+
+  // el filtro de arte debe poder fallar: Unova es la region con huecos (noart.h)
+  Pet u;
+  u.begin();
+  u.dbgHatchAs(495, false);                      // Snivy
+  u.ageMinutes = 19UL * MINUTES_PER_LEVEL;
+  u.region = 4;                                  // Unova
+  if (!regionAvailable(4)) {
+    ck(true, "Unova sin arte en el emulador: se omite el filtro de arte");
+  } else {
+    const RegionInfo &ug = REGIONS[4];
+    bool uArt = true, uReg = true;
+    int uCount = 0;
+    for (int i = 0; i < 3000; i++) {
+      WildMon m;
+      if (!wildRoll(u, m)) { uArt = false; break; }
+      uCount++;
+      if (!speciesHasArt(m.dex)) uArt = false;
+      if (m.dex < ug.lo || m.dex > ug.hi) uReg = false;
+    }
+    ck(uCount == 3000 && uArt, "Unova: ninguna especie sin arte");
+    ck(uReg, "Unova: todas dentro de su region");
+  }
+
+  // Eevee: la rama sale de eeveeOptions(), no solo del 134 de la tabla
+  Pet e;
+  e.begin();
+  e.dbgHatchAs(4, false);
+  e.ageMinutes = 29UL * MINUTES_PER_LEVEL;       // nivel 30: Eevee ya puede evolucionar
+  e.region = 0;
+  int16_t opt[EEVEE_EVO_COUNT];
+  uint8_t nOpt = e.eeveeOptions(opt);
+  bool seen[EEVEE_EVO_COUNT] = {};
+  int branches = 0, eeveeSeen = 0;
+  for (int i = 0; i < 20000; i++) {
+    WildMon m;
+    if (!wildRoll(e, m)) continue;
+    if (m.dex == DEX_EEVEE) eeveeSeen++;
+    for (int k = 0; k < EEVEE_EVO_COUNT; k++)
+      if (m.dex == EEVEE_EVOS[k] && !seen[k]) { seen[k] = true; branches++; }
+  }
+  printf("     Eevee: %u ramas disponibles, %d vistas, %d Eevee sin evolucionar\n",
+         nOpt, branches, eeveeSeen);
+  ck(nOpt < 2 || branches >= 2, "Eevee evoluciona por mas de una rama");
 }
 
 static void testPersist() {

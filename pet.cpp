@@ -515,7 +515,10 @@ void Pet::registerCaught(int16_t dex, bool shinyMon) {
   if (dex < 1 || dex > DEX_COUNT) return;
   dexReg[(dex - 1) >> 3] |= (1 << ((dex - 1) & 7));
   if (shinyMon) dexShinyReg[(dex - 1) >> 3] |= (1 << ((dex - 1) & 7));
-  save();
+  // no save(): una escritura NVS completa congela los dos nucleos ~1 s en plena
+  // celebracion. El guardado de party/subida del llamador va detras y el volcado
+  // periodico (pendingSave) persiste los bits de la Pokedex.
+  pendingSave = true;
 }
 
 // la racha y el vinculo mejoran el sorteo del huevo (0..~14)

@@ -104,16 +104,18 @@ distancia al círculo objetivo:
 **Probabilidad** (sobre 255, entera):
 
 ```
-a = tasa × (3·hpMax − 2·hp) / (3·hpMax) × estado × punteria
+a = tasa × (3·hpMax − 2·hp) × estado × punteria / (3·hpMax)
 ```
 
 - `tasa`: común 45, raro 25, legendario 3.
 - `estado`: dormido o congelado ×2; paralizado, quemado o envenenado ×1,5; si no ×1.
-- Los multiplicadores fraccionarios se aplican como ×3/2 y ×1/2 en enteros.
+- Los multiplicadores fraccionarios (×3/2, ×1/2) se aplican en el numerador, antes
+  de la única división entera.
 - `a` se acota a [1, 255].
 
-**Tambaleos.** Hasta 3. Cada uno tira `rand(0..255) < a`; el primero que falla
-rompe la bola y el salvaje escapa de ella. Si pasan los 3, queda capturado.
+**Tambaleos.** Una sola tirada `rand(0..254) < a` decide la captura (probabilidad
+a/255, como en los juegos). Los tambaleos son la animacion: 3 si entra; 0, 1 o 2
+al azar si se escapa.
 
 **Tras un fallo** el salvaje juega su turno. Desde el **cuarto** lanzamiento
 fallido, cada fallo tiene un 25 % de que el salvaje **huya** y termine el encuentro.

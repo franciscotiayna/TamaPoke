@@ -41,22 +41,26 @@ uint8_t wildCatchValue(uint8_t tier, uint16_t hp, uint16_t maxHp, uint8_t ailmen
   uint32_t rate = tier == R_LEGENDARIO ? 3 : tier == R_RARO ? 25 : 45;
   if (maxHp == 0) maxHp = 1;
   if (hp > maxHp) hp = maxHp;
-  uint32_t a = rate * (3u * maxHp - 2u * hp) / (3u * maxHp);
-  if (ailment == AIL_SLEEP || ailment == AIL_FREEZE) a *= 2;
-  else if (ailment == AIL_PARA || ailment == AIL_BURN || ailment == AIL_POISON) a = a * 3 / 2;
-  if (aim == AIM_PERFECT) a *= 2;
-  else if (aim == AIM_GOOD) a = a * 3 / 2;
-  else if (aim == AIM_MISS) a /= 2;
+  // estado y punteria como fracciones, todo antes de UNA sola division
+  uint32_t sNum = 1, sDen = 1, aNum = 1, aDen = 1;
+  if (ailment == AIL_SLEEP || ailment == AIL_FREEZE) sNum = 2;
+  else if (ailment == AIL_PARA || ailment == AIL_BURN || ailment == AIL_POISON) { sNum = 3; sDen = 2; }
+  if (aim == AIM_PERFECT) aNum = 2;
+  else if (aim == AIM_GOOD) { aNum = 3; aDen = 2; }
+  else if (aim == AIM_MISS) aDen = 2;
+  uint32_t num = rate * (3u * maxHp - 2u * hp) * sNum * aNum;
+  uint32_t den = 3u * maxHp * sDen * aDen;
+  uint32_t a = num / den;
   if (a < 1) a = 1;
   if (a > 255) a = 255;
   return (uint8_t)a;
 }
 
 uint8_t wildShakes(uint8_t a) {
-  // random(255) da 0..254: con a=255 los tres tambaleos pasan siempre
-  uint8_t n = 0;
-  while (n < 3 && random(255) < a) n++;
-  return n;
+  // random(255) da 0..254: con a=255 siempre entra. Una sola tirada decide;
+  // los tambaleos de un fallo (0..2) son puro adorno
+  if (random(255) < a) return 3;
+  return (uint8_t)random(3);
 }
 
 bool wildFlees(uint8_t failedThrows) {
@@ -66,7 +70,11 @@ bool wildFlees(uint8_t failedThrows) {
 #define WILD_CAND_MAX 260   // como CAND_MAX en pet.cpp: cabe la region mas grande
 
 static uint8_t wildRegion(uint8_t want) {
-  return regionAvailable(want) ? want : nextAvailableRegion(want);
+  // copia local de eggRegionFallback() de pet.cpp (alli es static)
+  if (regionAvailable(want)) return want;
+  for (uint8_t i = 0; i < REGION_COUNT; i++)
+    if (i != REGION_ALL && regionAvailable(i)) return i;
+  return want;
 }
 
 bool wildRoll(Pet &p, WildMon &m) {
@@ -104,10 +112,19 @@ bool wildRoll(Pet &p, WildMon &m) {
   if (lvl > MAX_LEVEL) lvl = MAX_LEVEL;
 
   // con nivel de sobra puede salir ya evolucionado, un paso cada vez
-  while (DEX_TBL[dex].evolvesTo && DEX_TBL[dex].evolvesTo <= DEX_COUNT &&
-         DEX_TBL[dex].evolveLevel && lvl >= DEX_TBL[dex].evolveLevel &&
-         speciesHasArt(DEX_TBL[dex].evolvesTo) && random(100) < WILD_EVOLVED_PCT)
-    dex = DEX_TBL[dex].evolvesTo;
+  for (;;) {
+    int16_t next = DEX_TBL[dex].evolvesTo;
+    if (dex == DEX_EEVEE) {                      // la tabla solo guarda 134
+      int16_t o[EEVEE_EVO_COUNT];
+      uint8_t n = p.eeveeOptions(o);
+      if (n) next = o[random(n)];
+    }
+    if (!next || next > DEX_COUNT || !DEX_TBL[dex].evolveLevel ||
+        lvl < DEX_TBL[dex].evolveLevel || !speciesHasArt(next) ||
+        !regionAvailable(regionOfDex(next)) || random(100) >= WILD_EVOLVED_PCT)
+      break;
+    dex = next;
+  }
 
   int shinyBase = 48 - p.careBonus();
   if (shinyBase < 8) shinyBase = 8;
@@ -125,7 +142,7 @@ bool wildRoll(Pet &p, WildMon &m) {
 
 void wildLoad(WildState &w, const Pet &p) {
   Preferences pr;
-  pr.begin("tamapoke", true);
+  if (!pr.begin("tamapoke", true)) return;      // sin NVS: el estado del llamador queda como esta
   bool init = pr.getBool("wini", false);
   w = WildState();
   if (init) {
@@ -149,7 +166,7 @@ void wildLoad(WildState &w, const Pet &p) {
 
 void wildSave(const WildState &w) {
   Preferences pr;
-  pr.begin("tamapoke", false);
+  if (!pr.begin("tamapoke", false)) return;
   pr.putBool("wini", true);
   pr.putUShort("wcoin", w.coins);
   pr.putUChar("wball", w.balls);
