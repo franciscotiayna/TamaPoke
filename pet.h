@@ -198,6 +198,10 @@ public:
   bool frozen = false;
   void reviveFrom(const PartyMon &m);
 
+  // Lo capturado cuenta en la Pokedex como lo criado. registerSpecies() mira
+  // el shiny de la mascota activa, que aqui no es el capturado.
+  void registerCaught(int16_t dex, bool shinyMon);
+
   // The player's own name, alongside the badges and the streak: it belongs to
   // whoever is playing, not to the creature, so newEgg() must never clear it.
   char trainerName[12] = "";

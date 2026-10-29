@@ -57,3 +57,10 @@ uint8_t wildCatchValue(uint8_t tier, uint16_t hp, uint16_t maxHp, uint8_t ailmen
 uint8_t wildShakes(uint8_t a);
 // Tras un lanzamiento fallido: desde el cuarto fallo, 25% de que huya.
 bool wildFlees(uint8_t failedThrows);
+
+// Sortea el salvaje: legendario 1% con 25+ registrados (nivel +10, minimo 40);
+// si no, rareza como los huevos (comun / raro con el bonus de cuidado) y
+// prefiriendo lineas incompletas. Region de los huevos, nivel de la mascota
+// +-3, a veces ya evolucionado, shiny 1/48 mejorado por el cuidado.
+// false si la mascota es un huevo o no hay nada que sacar.
+bool wildRoll(Pet &p, WildMon &out);

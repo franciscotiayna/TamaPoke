@@ -7,6 +7,7 @@
 #include "battle.h"
 #include "wild.h"
 #include "dex.h"
+#include "noart.h"
 #include <cstdio>
 #include <cstring>
 
@@ -70,9 +71,51 @@ static void testCatch() {
   ck(fled > 800 && fled < 1200, "desde el cuarto fallo huye ~25%");
 }
 
+static void testRoll() {
+  Pet p;
+  p.begin();
+  p.dbgHatchAs(4, false);                        // Charmander
+  p.ageMinutes = 19UL * MINUTES_PER_LEVEL;       // nivel 20
+  p.region = 0;                                  // Kanto
+  const RegionInfo &rg = REGIONS[0];
+  bool rolled = true, lvOk = true, regOk = true, artOk = true, noLegend = true, evolved = false;
+  for (int i = 0; i < 500; i++) {
+    WildMon m;
+    if (!wildRoll(p, m)) { rolled = false; break; }
+    if (m.level < 17 || m.level > 23) lvOk = false;
+    if (m.dex < rg.lo || m.dex > rg.hi) regOk = false;
+    if (!speciesHasArt(m.dex)) artOk = false;
+    if (m.tier == R_LEGENDARIO) noLegend = false;
+    if (DEX_TBL[m.dex].rarity == R_EVO) evolved = true;
+  }
+  ck(rolled, "siempre sale un salvaje");
+  ck(lvOk, "nivel = el de la mascota +-3");
+  ck(regOk, "solo de la region elegida");
+  ck(artOk, "nunca una especie sin arte");
+  ck(noLegend, "sin legendarios con menos de 25 registrados");
+  ck(evolved, "a nivel 20 a veces sale ya evolucionado");
+
+  for (int16_t d = 1; d <= 30; d++) p.registerCaught(d, false);
+  ck(p.isRegistered(30) && !p.isShinyRegistered(30), "registerCaught apunta en la Pokedex");
+  p.registerCaught(31, true);
+  ck(p.isShinyRegistered(31), "registerCaught apunta el shiny aparte");
+  int legends = 0;
+  bool legLv = true;
+  for (int i = 0; i < 4000; i++) {
+    WildMon m;
+    wildRoll(p, m);
+    if (m.tier != R_LEGENDARIO) continue;
+    legends++;
+    if (m.level < 40 || DEX_TBL[m.dex].rarity != R_LEGENDARIO) legLv = false;
+  }
+  ck(legends > 10 && legends < 100, "con 25+ registrados, ~1% legendarios");
+  ck(legLv, "el legendario sale a nivel 40 o mas");
+}
+
 int main() {
   testEconomy();
   testCatch();
+  testRoll();
   printf(bad ? "%d FAILED\n" : "all passed\n", bad);
   return bad ? 1 : 0;
 }
