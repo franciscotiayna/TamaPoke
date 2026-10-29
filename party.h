@@ -42,8 +42,11 @@ struct PartyMon {
 // cambian de formato (ver el aviso de begin() sobre agrandar PartyMon) y un
 // guardado antiguo simplemente no tiene estas, asi que sus huecos quedan con
 // valid = 0 y vuelven a criarse con la edad de su nivel.
-// Solo se AGREGA al final, nunca se reordena (y 18 de estas deben caber en el
-// MAX_VAL de save.cpp).
+// Party::begin() solo acepta "plife"/"blife" con la longitud EXACTA de hoy:
+// cambiar el tamano de esta estructura descarta la vida de todos los guardados
+// (vuelven con la edad de su nivel). Un campo nuevo de un byte va en reserved[]
+// (siempre a cero) sin cambiar el tamano; mas que eso pide una migracion como
+// la de PartyMon. 18 de estas deben caber en el MAX_VAL de save.cpp.
 struct PartyLife {
   uint8_t valid = 0;
   uint8_t bond = 0, bondToday = 0, weight = 0;
@@ -56,7 +59,9 @@ struct PartyLife {
   // UNA vez en su vida: si no, criarla de nuevo y despedirla gratis seria una
   // granja de huevos bendecidos.
   uint8_t blessUsed = 0;
+  uint8_t reserved[3] = { 0, 0, 0 };   // relleno explicito: sizeof sigue en 24
 };
+static_assert(sizeof(PartyLife) == 24, "PartyLife cambio de tamano: ver el aviso de arriba");
 
 class Party {
 public:
