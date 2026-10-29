@@ -36,6 +36,7 @@ extern bool holdFired;
 extern Pet pet;
 extern bool partyOpen, boxOpen, movePickOpen, releaseConfirm;
 extern uint8_t partyDetail, boxDetail, boxSwapFrom, boxSel;
+extern bool eggConfirm;
 
 static int bad=0;
 static void ck(bool ok,const char*w){printf("%s  %s\n",ok?"PASS":"FAIL",w); if(!ok)bad++;}
@@ -51,6 +52,9 @@ bool monSheetBtn(int16_t,int16_t,bool);
 #define CONF_YES_Y (206 + 52/2)
 #define CONF_NO_Y  (268 + 52/2)
 #define CONF_X 233
+// centre of the EGG pill (EGGPILL_X 163 + 140/2, EGGPILL_Y 34 + 44/2)
+#define EGGPILL_CX 233
+#define EGGPILL_CY (34 + 44/2)
 
 // handleTouch() self-gates to 50 Hz off millis(), so real time has to pass
 // between polls; a tight spin is swallowed by that gate.
@@ -74,7 +78,7 @@ static PartyMon mon(int16_t dex, uint16_t lvl, const char *nick){
 static void clearAll(){
   for(int i=0;i<PARTY_SLOTS;i++) party.releaseAt(i);
   for(int i=0;i<BOX_SLOTS;i++) party.boxReleaseAt(i);
-  partyOpen=boxOpen=movePickOpen=releaseConfirm=false;
+  partyOpen=boxOpen=movePickOpen=releaseConfirm=eggConfirm=false;
   partyDetail=boxDetail=boxSwapFrom=boxSel=0;
 }
 
@@ -171,25 +175,113 @@ int main(){
        "and releasing disarms it, so nothing points at a creature that is gone");
   }
 
-  // ---- BRING BACK, tapped where a thumb actually lands
+  // ---- CRIAR (it was BRING BACK) over an egg, tapped where a thumb lands
   //
-  // Never covered before: the party section above hatches a creature, so
-  // pet.isEgg() is false and BRING BACK correctly denies. With an egg waiting --
-  // the state a new board is set up in -- it must work, AND it must work from
-  // the panel's centre line, which is where the button used to be drawn
-  // full-width and where a thumb goes by default.
+  // BRING BACK used to work only with an egg waiting, because it destroyed
+  // whatever was alive. CRIAR swaps instead, so it works either way; over an egg
+  // the egg is set aside (one slot) rather than lost. It must also work from the
+  // panel's centre line, where the button used to be drawn full-width and where
+  // a thumb goes by default.
   {
     clearAll();
     party.slots[0] = mon(3, 100, "");
     party.save();
     if (!pet.isEgg()) { pet.newEgg(); }
     if (pet.awaitingStarter()) pet.chooseStarter(4);
+    ck(!pet.hasStoredEgg(), "no egg is set aside yet");
     partyOpen = true;
     partyTap(PCELL_X(0) + 40, PCELL_Y(0) + 30);
     ck(partyDetail == 1, "the sheet opens with an egg waiting");
     partyTap(233, SHEET_BTN_Y);                  // dead centre
-    ck(pet.speciesId == 3, "BRING BACK works when tapped at the panel centre");
+    ck(pet.speciesId == 3, "CRIAR works when tapped at the panel centre");
+    ck(!pet.frozen, "and the creature is raised for real, not a frozen companion");
+    ck(pet.hasStoredEgg(), "the egg it replaced is set aside, not destroyed");
     ck(party.count() == 0, "and the creature leaves the party to become the pet");
+  }
+
+  // ---- CRIAR over a live pet swaps the two; nobody is lost
+  //
+  // Three storage states, three code paths: a free party slot, a full party with
+  // room in the box, and everything full (the in-place swap).
+  {
+    // `oldAt`: where the old pet should end up. With a free party slot it takes
+    // that one (a brand new slot, so it is never only in RAM); otherwise it
+    // lands in the chosen one's slot.
+    struct Case { const char *name; int fillParty; int fillBox; int oldAt; };
+    const Case cases[] = {
+      { "a free party slot", 2, 0, 2 },
+      { "a full party, room in the box", PARTY_SLOTS, 0, 1 },
+      { "party and box both full", PARTY_SLOTS, BOX_SLOTS, 1 },
+    };
+    for (const Case &c : cases) {
+      clearAll();
+      pet.dbgHatchAs(6, false);                    // a fresh Charizard each round
+      pet.ageMinutes = 60UL * 45;
+      while (pet.hasLearnOffer()) pet.declineLearn();
+      int16_t oldDex = pet.speciesId;
+      uint32_t oldAge = pet.ageMinutes;
+      for (int i = 0; i < c.fillParty; i++) party.slots[i] = mon(16, 30, "");
+      party.slots[1] = mon(25, 30, "PIKA");         // the one to raise, always slot 1
+      party.life[1] = PartyLife();
+      party.life[1].valid = 1; party.life[1].ageMinutes = 60UL * 30; party.life[1].bond = 70;
+      for (int i = 0; i < c.fillBox; i++) party.box[i] = mon(19, 20, "");
+      party.save(); party.boxSave();
+      uint8_t partyBefore = party.count(), boxBefore = party.boxCount();
+
+      partyOpen = true;
+      partyTap(PCELL_X(1) + 40, PCELL_Y(1) + 30);  // PIKA's sheet
+      printf("     -- %s\n", c.name);
+      ck(partyDetail == 2, "PIKA's sheet opens");
+      partyTap(SHEET_L_X, SHEET_BTN_Y);            // CRIAR
+      ck(pet.speciesId == 25 && !strcmp(pet.nick, "PIKA"), "the chosen creature is now the pet");
+      ck(!pet.frozen, "raised for real, not frozen");
+      ck(pet.ageMinutes == 60UL * 30 && pet.bond == 70, "with the life it was banked with");
+      int at = -1;
+      for (int i = 0; i < PARTY_SLOTS; i++) if (party.slots[i].dex == oldDex) at = i;
+      ck(at == c.oldAt, "the old pet lands in the expected slot");
+      ck(at >= 0 && party.life[at].valid && party.life[at].ageMinutes == oldAge,
+         "and keeps its whole life, so it can be raised again later");
+      bool pikaLeft = false;
+      for (int i = 0; i < PARTY_SLOTS; i++) if (party.slots[i].dex == 25) pikaLeft = true;
+      for (int i = 0; i < BOX_SLOTS; i++) if (party.box[i].dex == 25) pikaLeft = true;
+      ck(!pikaLeft, "the chosen one is not left behind as a copy");
+      ck(party.count() == partyBefore && party.boxCount() == boxBefore,
+         "and nothing else in the party or the box moved");
+      ck(!partyOpen, "the party screen closes onto the new pet");
+      Party q; q.begin();
+      ck(q.slots[c.oldAt].dex == oldDex, "the swap is persisted, not only in RAM");
+    }
+  }
+
+  // ---- the EGG pill: the egg set aside above comes back, asking first
+  {
+    clearAll();
+    if (pet.isEgg()) pet.dbgHatchAs(6, false);
+    ck(pet.hasStoredEgg(), "an egg is still set aside");
+    for (int i = 0; i < PARTY_SLOTS; i++) party.slots[i] = mon(16, 30, "");
+    for (int i = 0; i < BOX_SLOTS; i++) party.box[i] = mon(19, 20, "");
+    party.save(); party.boxSave();
+    partyOpen = true;
+    partyTap(EGGPILL_CX, EGGPILL_CY);
+    ck(!eggConfirm, "with nowhere to put the pet the pill refuses, rather than asking");
+
+    clearAll();
+    int16_t oldDex = pet.speciesId;
+    uint32_t oldAge = pet.ageMinutes;
+    partyOpen = true;
+    partyTap(EGGPILL_CX, EGGPILL_CY);
+    ck(eggConfirm, "tapping the pill asks first");
+    partyTap(PCELL_X(0) + 40, PCELL_Y(0) + 30);
+    ck(eggConfirm && partyDetail == 0, "the question is modal: the grid under it is inert");
+    partyTap(CONF_X, CONF_NO_Y);
+    ck(!eggConfirm && !pet.isEgg() && pet.hasStoredEgg(), "NO leaves everything as it was");
+    partyTap(EGGPILL_CX, EGGPILL_CY);
+    partyTap(CONF_X, CONF_YES_Y);
+    ck(pet.isEgg() && !pet.hasStoredEgg(), "YES brings the egg back as the pet");
+    ck(party.count() == 1 && party.slots[0].dex == oldDex &&
+       party.life[0].valid && party.life[0].ageMinutes == oldAge,
+       "and the old pet is banked with its whole life first");
+    ck(!partyOpen && !eggConfirm, "the party screen closes onto the egg");
   }
 
   // ---- the 3 s hold, and WHERE it is allowed to fire

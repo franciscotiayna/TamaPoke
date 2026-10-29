@@ -388,6 +388,14 @@ uint8_t btlMyAct = 0;        // host: our own action, latched until theirs lands
 #define PARTYCLOSE_H UI_TAP_MIN
 #define PARTYCLOSE_X 133
 #define PARTYCLOSE_W 200
+// Pildora HUEVO: ocupa el sitio del titulo del equipo cuando hay un huevo
+// apartado. Empieza en y 34, justo donde acaba la franja superior que cierra la
+// pantalla (y < 34), y acaba 10 px por encima de la rejilla (PARTY_GRID_Y 88).
+// A y 34 la pantalla redonda mide 2*sqrt(233^2 - 199^2) = 242 px: cabe la de 140.
+#define EGGPILL_X 163
+#define EGGPILL_Y 34
+#define EGGPILL_W 140
+#define EGGPILL_H 44
 
 // The confirm panel, in ONE place. Three callers draw it -- the evolve/farewell/
 // retire dialog on the main screen, and letting a banked creature go from the
@@ -883,6 +891,7 @@ void loop() {
       partyPick = true;
       partyOpen = true;
       menuOpen = false;
+      eggConfirm = false;    // la pregunta del huevo no sigue encima del selector
     }
   }
 
@@ -1435,6 +1444,7 @@ void onSwipeV(int dir) {
   if (movePickOpen) { movePickOpen = false; return; }
   if (boxOpen) { boxOpen = false; boxSel = 0; return; }   // vertical backs out
   if (partyOpen) {
+    if (eggConfirm) { eggConfirm = false; return; }   // el gesto solo quita la pregunta
     if (partyDetail) { partyDetail = 0; return; }
     if (partyPick) { partyPick = false; pet.endedKind = CER_NONE; }
     partyOpen = false;
@@ -1478,6 +1488,28 @@ void onSwipeV(int dir) {
 // The detail sheet, shared by the party and the box so the two cannot drift.
 // `fromBox` picks which action the LEFT button offers; the right one is always
 // RELEASE, which is irreversible and therefore always asks first.
+// Se puede poner a criar a otro ahora? No en mitad de una ceremonia o una
+// evolucion, ni eligiendo inicial, ni con un huevo esperando si ya hay otro
+// apartado (solo cabe uno). Vale para CRIAR desde el equipo, que es un
+// intercambio en el sitio; quien ademas necesite guardar a la actual en un hueco
+// libre (la captura, el huevo apartado) mira tambien storageFull().
+static bool canRaiseNow() {
+  return pet.ceremony == CER_NONE && !pet.evolving() && !pet.awaitingStarter() &&
+         !(pet.isEgg() && pet.hasStoredEgg());
+}
+
+// Equipo y caja llenos: no queda ningun hueco donde guardar a nadie.
+static bool storageFull() {
+  return party.isFull() && party.boxCount() >= BOX_SLOTS;
+}
+
+// Se puede poner a criar el huevo apartado? La mascota actual tiene que caber
+// en el equipo o la caja: con todo lleno la pildora sale gris y se niega, en vez
+// de dejar a la actual esperando en la RAM al selector de soltar.
+static bool eggRaiseOk() {
+  return pet.hasStoredEgg() && !pet.isEgg() && canRaiseNow() && !storageFull();
+}
+
 void renderMonSheet(const PartyMon &m, bool fromBox) {
   const DexEntry &d = DEX_TBL[m.dex];
   gfx->fillScreen(RGB565_BLACK);
@@ -1508,13 +1540,12 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
   gfx->setCursor(CX - (int)strlen(st) * 3, 300);
   gfx->print(st);
 
-  // Bringing one back is only offered while an egg is waiting. Otherwise it
-  // would silently destroy whatever creature is currently alive, and a rule the
-  // player cannot see is worse than a button they cannot press. A box creature
+  // CRIAR intercambia este miembro con la mascota actual (o aparta el huevo):
+  // ya no destruye a nadie, asi que solo se niega cuando no se puede criar ahora
+  // (ceremonia, evolucion, o un huevo vivo con otro ya apartado). A box creature
   // goes to the party instead, which is always allowed if there is room.
-  bool leftOk = fromBox ? (party.firstFree() >= 0)
-                        : (pet.isEgg() && !pet.awaitingStarter());
-  const char *leftLbl = fromBox ? T(S_BOX_TAKE) : T(S_REVIVE);
+  bool leftOk = fromBox ? (party.firstFree() >= 0) : canRaiseNow();
+  const char *leftLbl = fromBox ? T(S_BOX_TAKE) : T(S_RAISE);
   gfx->fillRoundRect(PDET_L_X, PDET_BTN_Y, PDET_L_W, PDET_BTN_H, 10,
                      leftOk ? UI_BAR_OK : UI_TRACK);
   gfx->drawRoundRect(PDET_L_X, PDET_BTN_Y, PDET_L_W, PDET_BTN_H, 10, UI_INK);
@@ -1542,7 +1573,7 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
   // Above the button there is clear space between it and the stat line, and
   // that is also where the eye is already travelling.
   if (!leftOk) {
-    const char *why = fromBox ? T(S_PARTY_FULL) : T(S_REVIVE_EGG);
+    const char *why = fromBox ? T(S_PARTY_FULL) : T(S_RAISE_NO);
     gfx->setTextColor(UI_BAR_WARN);
     gfx->setTextSize(1);
     gfx->setCursor(CX - (int)strlen(why) * 3, PDET_BTN_Y - 14);
@@ -1679,8 +1710,41 @@ bool monSheetConfirmTap(int16_t x, int16_t y, bool fromBox) {
   return false;
 }
 
+// Poner a criar el huevo apartado. Regla de cortes: la mascota actual se guarda
+// en el equipo o la caja ANTES de restaurar el huevo (que a su vez guarda la
+// mascota antes de borrar "egg2"): un corte duplica, nunca pierde.
+static void raiseStoredEgg() {
+  if (!eggRaiseOk()) { sfxPlay(SFX_DENY); return; }
+  PartyMon om; PartyLife ol;
+  pet.bankFull(om, ol);
+  if (!party.add(om, ol) && !party.boxAdd(om, ol)) { sfxPlay(SFX_DENY); return; }
+  snprintf(partyBannerName, sizeof(partyBannerName), "%s",
+           om.nick[0] ? om.nick : DEX_TBL[om.dex].name);
+  partyBannerUntil = millis() + 3500;   // "<nombre> se unio al equipo" al volver
+  if (!pet.restoreEgg()) return;        // no pasa: eggRaiseOk ya miro hasStoredEgg
+  partyOpen = false;
+  boxSwapFrom = 0;
+  sfxPlay(SFX_HATCH);
+}
+
 void partyTap(int16_t x, int16_t y) {
   if (boxOpen) { boxTap(x, y); return; }
+  if (eggConfirm) {   // modal, como el de soltar
+    int c1t, c1b, c2t, c2b;
+    uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
+    if (x < CONFIRM_BTN_X || x > CONFIRM_BTN_X + CONFIRM_BTN_W) return;
+    if (y >= c1t && y <= c1b) { eggConfirm = false; raiseStoredEgg(); }
+    else if (y >= c2t && y <= c2b) { eggConfirm = false; sfxPlay(SFX_TAP); }
+    return;
+  }
+  if (!partyDetail && pet.hasStoredEgg() && !partyPick && !boxSel &&
+      x >= EGGPILL_X && x <= EGGPILL_X + EGGPILL_W &&
+      y >= EGGPILL_Y && y <= EGGPILL_Y + EGGPILL_H) {
+    if (!eggRaiseOk()) { sfxPlay(SFX_DENY); return; }
+    eggConfirm = true;
+    sfxPlay(SFX_TAP);
+    return;
+  }
   // The SHEET IS CHECKED FIRST, and that is not cosmetic ordering. It covers the
   // whole screen, and its RELEASE button (x240..370, y336..384) lands inside the
   // BOX button's hit area (x138..328, y312..372) below -- so with BOX tested
@@ -1690,10 +1754,45 @@ void partyTap(int16_t x, int16_t y) {
     // The confirm is modal: while it is up nothing else on the sheet responds,
     // or a miss on YES would fall through to the move rows underneath it.
     if (releaseConfirm) { monSheetConfirmTap(x, y, false); return; }
-    if (monSheetBtn(x, y, true)) {           // BRING BACK
-      if (!pet.isEgg() || pet.awaitingStarter()) { sfxPlay(SFX_DENY); return; }
-      pet.reviveFrom(party.slots[partyDetail - 1]);
-      party.releaseAt(partyDetail - 1);      // it is alive now, not banked
+    if (monSheetBtn(x, y, true)) {           // CRIAR: intercambio con la mascota actual
+      if (!canRaiseNow()) { sfxPlay(SFX_DENY); return; }
+      uint8_t i = partyDetail - 1;
+      PartyMon m = party.slots[i];
+      PartyLife l = party.life[i];
+      // Regla ante un corte: en todo momento las dos criaturas estan guardadas
+      // en la NVS en algun sitio. Un corte puede duplicar, nunca perder.
+      if (pet.isEgg()) {
+        if (!pet.stashEgg()) { sfxPlay(SFX_DENY); return; }   // "egg2" escrito: huevo a salvo
+        pet.raiseFrom(m, l);                 // m vive (y sigue tambien en el hueco i)
+        party.releaseAt(i);                  // ya no hace falta en el equipo
+      } else {
+        PartyMon om; PartyLife ol;
+        pet.bankFull(om, ol);
+        int box = party.boxFirstFree();
+        if (party.firstFree() >= 0) {
+          // Hueco libre en el equipo: la actual entra ahi (duplicada un momento),
+          // m pasa a criarse y se libera su hueco.
+          party.add(om, ol);
+          pet.raiseFrom(m, l);
+          party.releaseAt(i);
+        } else if (box >= 0) {
+          // Equipo lleno: la actual va a la caja, m pasa a criarse, y la actual
+          // ocupa el hueco i de m antes de vaciar el de la caja, para que el
+          // intercambio quede "en el mismo sitio". Cada paso deja a las dos
+          // guardadas: replaceAt la duplica (hueco i + caja) hasta boxReleaseAt.
+          party.boxAdd(om, ol);
+          pet.raiseFrom(m, l);
+          party.replaceAt(i, om, ol);
+          party.boxReleaseAt((uint8_t)box);
+        } else {
+          // Todo lleno: intercambio en el mismo hueco. Hay una ventana minima e
+          // inevitable entre las dos escrituras: tras raiseFrom la NVS tiene a m
+          // viva y en el hueco i, y la actual solo en la RAM hasta replaceAt.
+          // (Al reves seria igual de corta y perderia a m en vez de a la actual.)
+          pet.raiseFrom(m, l);
+          party.replaceAt(i, om, ol);
+        }
+      }
       partyDetail = 0;
       boxSwapFrom = 0;
       partyOpen = false;
@@ -1824,6 +1923,7 @@ void onSwipe(int dir) {
     return;
   }
   if (partyOpen) {
+    if (eggConfirm) { eggConfirm = false; return; }   // el gesto solo quita la pregunta
     if (partyDetail) { partyDetail = 0; return; }
     if (partyPick) { partyPick = false; pet.endedKind = CER_NONE; }
     partyOpen = false;
@@ -1887,9 +1987,8 @@ static void caughtBank(const PartyMon &m, const PartyLife &l) {
 // apartado); una mascota va al equipo o la caja, nunca a esperar en la RAM: con
 // los dos llenos el "Si" se trata como "No".
 static bool raiseNowOk() {
-  if (pet.ceremony != CER_NONE || pet.evolving()) return false;
-  if (pet.isEgg()) return !pet.hasStoredEgg();
-  return !(party.isFull() && party.boxCount() >= BOX_SLOTS);
+  if (!canRaiseNow()) return false;      // incluye "huevo con otro ya apartado"
+  return pet.isEgg() || !storageFull();
 }
 
 // "Criarlo ahora?". Si: la mascota actual se guarda con toda su vida (o el
@@ -6065,12 +6164,24 @@ void renderParty() {
   gfx->fillScreen(RGB565_BLACK);
   gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
 
-  char head[24];
-  snprintf(head, sizeof(head), T(S_PARTY_FMT), party.count());
-  gfx->setTextColor(UI_INK);
-  gfx->setTextSize(3);
-  gfx->setCursor(CX - (int)strlen(head) * 9, 42);
-  gfx->print(head);
+  bool eggPill = pet.hasStoredEgg() && !partyPick && !boxSel;
+  if (eggPill) {
+    // el huevo apartado ocupa el sitio del titulo: tocarlo lo pone a criar
+    gfx->fillRoundRect(EGGPILL_X, EGGPILL_Y, EGGPILL_W, EGGPILL_H, 12,
+                       eggRaiseOk() ? UI_BAR_OK : UI_TRACK);
+    gfx->drawRoundRect(EGGPILL_X, EGGPILL_Y, EGGPILL_W, EGGPILL_H, 12, UI_INK);
+    gfx->setTextColor(UI_WHITE);
+    gfx->setTextSize(2);
+    gfx->setCursor(CX - (int)strlen(T(S_EGG_SLOT)) * 6, EGGPILL_Y + EGGPILL_H / 2 - 8);
+    gfx->print(T(S_EGG_SLOT));
+  } else {
+    char head[24];
+    snprintf(head, sizeof(head), T(S_PARTY_FMT), party.count());
+    gfx->setTextColor(UI_INK);
+    gfx->setTextSize(3);
+    gfx->setCursor(CX - (int)strlen(head) * 9, 42);
+    gfx->print(head);
+  }
 
   // the box lives behind this button; it also shows how full it is, so the
   // player knows there is anything in there without opening it
@@ -6121,6 +6232,10 @@ void renderParty() {
   gfx->setTextSize(2);
   gfx->setCursor(CX - (int)strlen(ex) * 6, PARTYCLOSE_Y + 14);
   gfx->print(ex);
+  if (eggConfirm) {
+    drawConfirmPanel(T(S_RAISE_Q), T(S_RAISE_HINT), nullptr, UI_TRACK,
+                     T(S_YES), UI_BAR_OK, UI_WHITE, T(S_NO), UI_TRACK, UI_INK);
+  }
   gfx->flush();
 }
 
