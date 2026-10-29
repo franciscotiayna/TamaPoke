@@ -114,15 +114,17 @@ bool menuOpen = false;
 // Four rows: PARTY and GYMS came out, since a swipe right and a swipe left now
 // reach them directly. Sized to the bezel -- the panel is 320 wide, so 160 from
 // the centre, and sqrt(233^2 - 160^2) = 169 means it can only span y 64..402.
-#define MENU_Y 75
+#define MENU_Y 72
 #define MENU_W 320
-#define MENU_H 316
-#define MENU_ROW_H 52
-#define MENU_ROW_GAP 6
-// 5 rows: STATS / POKEDEX / SETTINGS / RETIRE / CLOSE. At MENU_Y 75 the panel
-// spans 75..391 and the round display gives a half-width of 171 there against
-// the 160 a row needs, so the corners stay on glass.
-#define MENU_ROWS 5
+#define MENU_H 322
+#define MENU_ROW_H 44
+#define MENU_ROW_GAP 5
+// 6 rows: STATS / POKEDEX / SETTINGS / RETIRE / EXPLORE / CLOSE. At MENU_Y 72
+// the panel spans 72..394 (161 px either side of CY), where the round display
+// gives a half-width of sqrt(233^2 - 161^2) = 168 against the 160 the panel
+// needs, so the corners stay on glass. Rows run 88..377: 16 px of panel above
+// the first and 17 below the last, and 44 px still clears UI_TAP_MIN.
+#define MENU_ROWS 6
 #define MENU_ROW_Y(i) (MENU_Y + 16 + (i) * (MENU_ROW_H + MENU_ROW_GAP))
 
 // Party screen. partyPick != 0 means the newcomer needs a slot: the player
@@ -215,7 +217,7 @@ enum : uint8_t {
   SCR_STARTER = 0, SCR_REGION, SCR_GALLERY, SCR_DEXPICK, SCR_MOVEPICK, SCR_BOX,
   SCR_PARTY, SCR_KEYBOARD, SCR_CARD, SCR_PLAYER, SCR_CLOCK, SCR_GYM, SCR_GYMPICK,
   SCR_LAN, SCR_PICK, SCR_BATTLE, SCR_WIN, SCR_LEARN, SCR_TRAIN, SCR_MENU,
-  SCR_GAME, SCR_MAIN, SCR_COUNT
+  SCR_EXPLORE, SCR_GAME, SCR_MAIN, SCR_COUNT
 };
 extern const char *const SCREEN_NAME[SCR_COUNT];   // const is internal linkage in C++
 
@@ -239,7 +241,7 @@ const char *const SCREEN_NAME[SCR_COUNT] = {
   "starter", "region", "gallery", "dexpick", "movepick", "box",
   "party", "keyboard", "card", "player", "clock", "gym", "gympick",
   "lan", "pick", "battle", "win", "learn", "train", "menu",
-  "minigame", "main"
+  "explore", "minigame", "main"
 };
 
 // Badge art for a region, or nullptr when that region has none yet.
@@ -1124,8 +1126,7 @@ void handleSerial() {
       ok = wildRoll(pet, w);
     }
     bool started = false;
-    if (ok && wildCanStart() && uiCurrentScreen() == SCR_MAIN) {
-      exploreOpen = false;
+    if (ok && wildCanStart() && uiCurrentScreen() == SCR_MAIN) {   // EXPLORAR no es SCR_MAIN
       startWildBattle(w);
       started = battleOpen && btlWild;
     }
@@ -1410,6 +1411,7 @@ void onSwipeV(int dir) {
   if (uiCurrentScreen() == SCR_DEXPICK || uiCurrentScreen() == SCR_GYMPICK)
     return;                 // on the chooser, vertical does nothing: pick a row
   if (menuOpen) { menuOpen = false; return; }   // any swipe closes the menu
+  if (exploreOpen) { exploreOpen = false; return; }
   if (battleOpen) return;   // no swiping out of a fight
   if (pickOpen) { pickOpen = false; return; }
   if (lanOpen) { lanLeave(); lanOpen = false; return; }
@@ -1620,6 +1622,10 @@ void gymHeaderRects(int *pillTop, int *pillBot, int *rowTop) {
   if (rowTop) *rowTop = GYM_ROW_Y(0);
 }
 
+// Top of menu row i, so a test can tap a row off the same macro it is drawn
+// with: the menu grew a sixth row and every hard-coded y in a test moved.
+int uiMenuRowY(int i) { return MENU_ROW_Y(i); }
+
 void partyButtonRects(int *boxTop, int *boxBot, int *closeTop, int *closeBot) {
   if (boxTop) *boxTop = BOXBTN_Y - BOXBTN_PAD;
   if (boxBot) *boxBot = BOXBTN_Y + BOXBTN_H + BOXBTN_PAD;
@@ -1769,6 +1775,7 @@ void onSwipe(int dir) {
   if (pet.awaitingStarter()) return;  // bloqueado durante la eleccion de inicial
   if (raiseAskUp()) return;           // "Criarlo ahora?" es modal: se responde con un boton
   if (menuOpen) { menuOpen = false; return; }   // any swipe closes the menu
+  if (exploreOpen) { exploreOpen = false; return; }
   if (battleOpen) return;   // no swiping out of a fight
   if (pickOpen) {   // horizontal pages the candidates, as everywhere else
     uint8_t pages = (pickCandidates() + PICK_PER_PAGE - 1) / PICK_PER_PAGE;
@@ -1932,6 +1939,7 @@ void onTap(int16_t x, int16_t y) {
     else if (y >= c2t && y <= c2b) raiseCaught(false);
     return;
   }
+  if (exploreOpen) { exploreTap(x, y); return; }
   if (playerOpen) {
     if (playerPage == 0 && y >= 32 && y < 68) {   // the name: rename yourself
       openKeyboardFor(KB_TRAINER);
@@ -2059,7 +2067,8 @@ void onTap(int16_t x, int16_t y) {
         if (!pet.canRetireNow()) { sfxPlay(SFX_DENY); return; }
         choiceKind = 3; choiceUntil = millis() + 12000;
       }
-      return;                                     // i == 4 is CLOSE: just shut
+      else if (i == 4) { exploreOpen = true; }
+      return;                                     // i == 5 is CLOSE: just shut
     }
     return;
   }
@@ -2400,6 +2409,7 @@ uint8_t uiCurrentScreen() {
   if (clockOpen) return SCR_CLOCK;
   if (btlWinUntil) return SCR_WIN;
   if (battleOpen) return SCR_BATTLE;
+  if (exploreOpen) return SCR_EXPLORE;   // se cierra al empezar el combate; si no, gana el combate
   if (pickOpen) return SCR_PICK;
   if (lanOpen) return SCR_LAN;
   if (gymOpen) return gymPick ? SCR_GYMPICK : SCR_GYM;
@@ -2502,6 +2512,7 @@ void render() {
     renderBattle();
     return;
   }
+  if (exploreOpen) { renderExplore(); return; }   // despues del combate, como en uiCurrentScreen()
   if (pickOpen) {
     renderPick();
     return;
@@ -5661,6 +5672,98 @@ void renderCard() {
 
 // ---------- menu overlay ----------
 
+// ---------- EXPLORAR (fila del menu) ----------
+#define EXP_BTN_X 103
+#define EXP_BTN_W 260
+#define EXP_SEARCH_Y 146
+#define EXP_SEARCH_H 56
+#define EXP_BUY1_Y 250
+#define EXP_BUY10_Y 306
+#define EXP_BUY_H 48
+
+void renderExplore() {
+  gfx->fillScreen(RGB565_BLACK);
+  gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(3);
+  gfx->setCursor(CX - (int)strlen(T(S_EXPLORE)) * 9, 44);
+  gfx->print(T(S_EXPLORE));
+
+  char l1[24], l2[24];
+  snprintf(l1, sizeof(l1), T(S_BALLS_FMT), gWild.balls);
+  snprintf(l2, sizeof(l2), T(S_COINS_FMT), gWild.coins);
+  gfx->setTextSize(2);
+  gfx->setCursor(CX - (int)strlen(l1) * 6, 90);
+  gfx->print(l1);
+  gfx->setCursor(CX - (int)strlen(l2) * 6, 114);
+  gfx->print(l2);
+
+  bool searchOk = gWild.explores < WILD_EXPLORES_PER_DAY && wildCanStart();
+  char s[24];
+  snprintf(s, sizeof(s), T(S_SEARCH_FMT), WILD_EXPLORES_PER_DAY - gWild.explores, WILD_EXPLORES_PER_DAY);
+  gfx->fillRoundRect(EXP_BTN_X, EXP_SEARCH_Y, EXP_BTN_W, EXP_SEARCH_H, 12, searchOk ? UI_BAR_OK : UI_TRACK);
+  gfx->drawRoundRect(EXP_BTN_X, EXP_SEARCH_Y, EXP_BTN_W, EXP_SEARCH_H, 12, UI_INK);
+  gfx->setTextColor(searchOk ? UI_WHITE : 0x8410);
+  gfx->setCursor(CX - (int)strlen(s) * 6, EXP_SEARCH_Y + EXP_SEARCH_H / 2 - 8);
+  gfx->print(s);
+
+  const char *why = gWild.explores >= WILD_EXPLORES_PER_DAY ? T(S_NO_SEARCH)
+                  : !gWild.balls ? T(S_NO_BALLS) : nullptr;
+  if (why) {
+    gfx->setTextColor(UI_BAR_WARN);
+    gfx->setTextSize(1);
+    gfx->setCursor(CX - (int)strlen(why) * 3, EXP_SEARCH_Y + EXP_SEARCH_H + 14);
+    gfx->print(why);
+  }
+
+  const char *buy[2] = { T(S_BUY1), T(S_BUY10) };
+  const int by[2] = { EXP_BUY1_Y, EXP_BUY10_Y };
+  for (int i = 0; i < 2; i++) {
+    bool ok = wildCanBuy(gWild, i ? 10 : 1);
+    gfx->fillRoundRect(EXP_BTN_X, by[i], EXP_BTN_W, EXP_BUY_H, 12, ok ? UI_BG_DAY : UI_TRACK);
+    gfx->drawRoundRect(EXP_BTN_X, by[i], EXP_BTN_W, EXP_BUY_H, 12, UI_INK);
+    gfx->setTextColor(ok ? UI_INK : 0x8410);
+    gfx->setTextSize(2);
+    gfx->setCursor(CX - (int)strlen(buy[i]) * 6, by[i] + EXP_BUY_H / 2 - 8);
+    gfx->print(buy[i]);
+  }
+  gfx->setTextColor(UI_TRACK);
+  gfx->setTextSize(2);
+  gfx->setCursor(CX - (int)strlen(T(S_BACK)) * 6, 404);
+  gfx->print(T(S_BACK));
+  gfx->flush();
+}
+
+static bool expHit(int16_t x, int16_t y, int top, int h) {
+  return x >= EXP_BTN_X && x <= EXP_BTN_X + EXP_BTN_W && y >= top && y <= top + h;
+}
+
+void exploreTap(int16_t x, int16_t y) {
+  if (expHit(x, y, EXP_SEARCH_Y, EXP_SEARCH_H)) {
+    WildMon w;
+    if (gWild.explores >= WILD_EXPLORES_PER_DAY || !wildCanStart() || !wildRoll(pet, w)) {
+      sfxPlay(SFX_DENY);
+      return;
+    }
+    // La busqueda solo se gasta si el combate llega a empezar: si startBattle()
+    // se niega (p. ej. sin nadie que pueda luchar), la pantalla sigue y no cuesta.
+    startWildBattle(w);
+    if (!battleOpen || !btlWild) { sfxPlay(SFX_DENY); return; }
+    exploreOpen = false;
+    wildUseExplore(gWild);
+    wildSave(gWild);
+    return;
+  }
+  for (int i = 0; i < 2; i++) {
+    if (!expHit(x, y, i ? EXP_BUY10_Y : EXP_BUY1_Y, EXP_BUY_H)) continue;
+    if (!wildBuy(gWild, i ? 10 : 1)) { sfxPlay(SFX_DENY); return; }
+    wildSave(gWild);
+    sfxPlay(SFX_MEDAL);
+    return;
+  }
+  if (y > 380) { exploreOpen = false; sfxPlay(SFX_TAP); }   // volver
+}
+
 // Row labels are built fresh each frame because two of them carry live counts.
 static void menuRowLabel(int i, char *out, size_t n) {
   switch (i) {
@@ -5668,6 +5771,7 @@ static void menuRowLabel(int i, char *out, size_t n) {
     case 1: snprintf(out, n, T(S_POKEDEX_FMT), pet.registeredCount(), DEX_COUNT); break;
     case 2: snprintf(out, n, "%s", T(S_SETTINGS)); break;
     case 3: snprintf(out, n, "%s", T(S_RETIRE)); break;
+    case 4: snprintf(out, n, "%s", T(S_EXPLORE)); break;
     default: snprintf(out, n, "%s", T(S_CLOSE)); break;
   }
 }
