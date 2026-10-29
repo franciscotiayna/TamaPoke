@@ -13,6 +13,10 @@ void Party::begin() {
   // old party out of RAM.
   for (auto &s : slots) s = PartyMon();
   prefs.begin("tamapoke", false);
+  // La vida se carga ANTES de la migracion de abajo: su save() tambien escribe
+  // "plife", y con la vida aun sin cargar la pisaria con valores por defecto.
+  for (auto &l : life) l = PartyLife();
+  if (prefs.getBytesLength("plife") == sizeof(life)) prefs.getBytes("plife", life, sizeof(life));
   // The blob is raw structs, so growing PartyMon (moves[] was appended in v1.9)
   // changes its stride. Reading an older, shorter blob straight into the new
   // array would land slot 1 onward at the wrong offset and quietly invent a
@@ -53,8 +57,7 @@ void Party::begin() {
     if (s.dex < 1 || s.dex > DEX_COUNT) s.dex = 0;
     s.nick[sizeof(s.nick) - 1] = 0;
   }
-  for (auto &l : life) l = PartyLife();
-  if (prefs.getBytesLength("plife") == sizeof(life)) prefs.getBytes("plife", life, sizeof(life));
+  // con los huecos ya definitivos, un hueco vacio no puede conservar vida
   for (int i = 0; i < PARTY_SLOTS; i++) if (slots[i].empty()) life[i] = PartyLife();
   // The box is a separate key and simply absent on an older save, which leaves
   // it zeroed -- exactly what an empty box is.

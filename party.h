@@ -42,6 +42,8 @@ struct PartyMon {
 // cambian de formato (ver el aviso de begin() sobre agrandar PartyMon) y un
 // guardado antiguo simplemente no tiene estas, asi que sus huecos quedan con
 // valid = 0 y vuelven a criarse con la edad de su nivel.
+// Solo se AGREGA al final, nunca se reordena (y 18 de estas deben caber en el
+// MAX_VAL de save.cpp).
 struct PartyLife {
   uint8_t valid = 0;
   uint8_t bond = 0, bondToday = 0, weight = 0;
@@ -50,6 +52,10 @@ struct PartyLife {
   uint16_t goodTicks = 0;
   uint32_t ageMinutes = 0;
   uint32_t farDeclinedAge = 0;
+  // Ya cobro la bendicion de despedida del siguiente huevo. Una criatura la da
+  // UNA vez en su vida: si no, criarla de nuevo y despedirla gratis seria una
+  // granja de huevos bendecidos.
+  uint8_t blessUsed = 0;
 };
 
 class Party {

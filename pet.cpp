@@ -1,4 +1,5 @@
 #include "pet.h"
+#include <stddef.h>
 #include "avatars.h"
 #include "dex.h"
 #include "moves.h"
@@ -88,6 +89,7 @@ void Pet::newEgg() {
   ageMinutes = 0;
   careMistakes = 0;
   mistakeCooldown = 0;
+  blessUsed = false;
   sleeping = false;
   frozen = false;
   save();
@@ -282,6 +284,12 @@ void Pet::applyRevive(const PartyMon &m) {
   hygiene = 100;
   poops = 0;
   frozen = true;
+  blessUsed = false;
+  // Nada de la mascota anterior debe colarse: ni su modo de sueno (SLEEP_PLAYER
+  // dejaria a la nueva despierta toda la noche) ni sus avisos en pantalla.
+  sleepAuto = SLEEP_NONE;
+  newMedal = 0;
+  medalUntil = eatUntil = heartUntil = milestoneUntil = evolveUntil = 0;
   strncpy(nick, m.nick, sizeof(nick) - 1);
   nick[sizeof(nick) - 1] = 0;
   registerSpecies(speciesId);
@@ -303,7 +311,7 @@ void Pet::bankFull(PartyMon &m, PartyLife &l) const {
   l.valid = 1;
   l.ageMinutes = ageMinutes;
   l.bond = bond;
-  l.bondToday = bondToday;
+  l.bondToday = bondToday;   // se guarda, pero raiseFrom() no lo restaura
   l.weight = weight;
   l.careMistakes = careMistakes;
   l.mistakeCooldown = mistakeCooldown;
@@ -313,6 +321,11 @@ void Pet::bankFull(PartyMon &m, PartyLife &l) const {
   l.evoDeclinedLv = evoDeclinedLv;
   l.goodTicks = goodTicks;
   l.farDeclinedAge = farDeclinedAge;
+  // Esta despedida bendice el huevo siguiente si lastEnd quedo en FAREWELL
+  // (startFarewell() lo deja asi solo si aun no habia cobrado la bendicion; una
+  // retirada anticipada lo pone en RELEASE). bankFull() se llama con la
+  // ceremonia aun en curso (snapshotForParty), asi que esto es la criatura que se va.
+  l.blessUsed = (blessUsed || (ceremony == CER_FAREWELL && lastEnd == CER_FAREWELL)) ? 1 : 0;
 }
 
 void Pet::raiseFrom(const PartyMon &m, const PartyLife &l) {
@@ -323,7 +336,8 @@ void Pet::raiseFrom(const PartyMon &m, const PartyLife &l) {
   if (l.valid) {
     ageMinutes = l.ageMinutes;
     bond = l.bond;
-    bondToday = l.bondToday;
+    // bondToday NO se restaura: es un tope diario en RAM, relativo al dia en que
+    // se guardo; applyRevive() ya lo dejo a 0.
     weight = l.weight;
     careMistakes = l.careMistakes;
     mistakeCooldown = l.mistakeCooldown;
@@ -333,6 +347,7 @@ void Pet::raiseFrom(const PartyMon &m, const PartyLife &l) {
     evoDeclinedLv = l.evoDeclinedLv;
     goodTicks = l.goodTicks;
     farDeclinedAge = l.farDeclinedAge;
+    blessUsed = l.blessUsed != 0;
   } else {                 // guardado de antes de PartyLife: lo que no sabemos, a cero
     evoPen = 0;
     evoDeclinedLv = 0;
@@ -370,6 +385,10 @@ bool Pet::restoreEgg() {
   frozen = false;
   retirePending = false;
   starterPick = false;
+  blessUsed = false;
+  sleepAuto = SLEEP_NONE;
+  newMedal = 0;
+  medalUntil = eatUntil = heartUntil = milestoneUntil = evolveUntil = 0;
   speciesId = -1;
   prevSpeciesId = -1;
   eggTaps = storedEgg.eggTaps;
@@ -386,9 +405,12 @@ bool Pet::restoreEgg() {
   poops = 0;
   weight = 0;
   sleeping = false;
+  // Orden por seguridad ante un corte: PRIMERO se guarda la mascota (el huevo ya
+  // es el activo) y DESPUES se borra "egg2". Un corte entre las dos escrituras
+  // deja el huevo duplicado, nunca perdido.
   storedEgg = StoredEgg();
-  if (opened) prefs.putBytes("egg2", &storedEgg, sizeof(storedEgg));
   save();
+  if (opened) prefs.putBytes("egg2", &storedEgg, sizeof(storedEgg));
   return true;
 }
 
@@ -1012,7 +1034,10 @@ void Pet::startRetire() {
 
 void Pet::startFarewell() {
   if (isEgg() || ceremony != CER_NONE) return;
-  lastEnd = CER_FAREWELL;
+  // La bendicion del huevo siguiente se cobra UNA vez por criatura. Si ya la dio
+  // (volvio de la caja con blessUsed), la despedida es neutra: si no, se podria
+  // criar un huevo, volver a criar al viejo, despedirlo gratis y repetir.
+  lastEnd = blessUsed ? CER_RELEASE : CER_FAREWELL;
   ceremony = CER_FAREWELL;
   ceremonyUntil = millis() + CEREMONY_MS;
   heartUntil = ceremonyUntil;  // corazones durante toda la despedida
@@ -1049,6 +1074,7 @@ void Pet::hatch() {
   goodTicks = 0;
   berryKnown = false;
   bond = 0;          // vinculo, medallas y nombre son del individuo
+  blessUsed = false;
   bondToday = 0;
   medals = 0;
   newMedal = 0;
@@ -1388,6 +1414,7 @@ void Pet::save() {
   prefs.putUChar("evop", evoPen);
   prefs.putUChar("slpa", sleepAuto);
   prefs.putBool("rtpn", retirePending);
+  prefs.putBool("bless", blessUsed);
   prefs.putBytes("dexsh", dexShinyReg, sizeof(dexShinyReg));
   prefs.putUInt("age", ageMinutes);
   prefs.putShort("dexn", speciesId);
@@ -1446,6 +1473,7 @@ void Pet::load() {
   evoPen = prefs.getUChar("evop", 0);
   sleepAuto = prefs.getUChar("slpa", SLEEP_NONE);
   retirePending = prefs.getBool("rtpn", false);
+  blessUsed = prefs.getBool("bless", false);
   loadBlob(prefs, "dexsh", dexShinyReg, sizeof(dexShinyReg));
   ageMinutes = prefs.getUInt("age", 0);
   if (prefs.isKey("dexn")) {
@@ -1509,7 +1537,12 @@ void Pet::load() {
   // siembra: la mascota actual cuenta como criada (guardados antiguos)
   if (speciesId >= 1) registerSpecies(speciesId);
   storedEgg = StoredEgg();
-  if (prefs.getBytesLength("egg2") == sizeof(storedEgg))
-    prefs.getBytes("egg2", &storedEgg, sizeof(storedEgg));
+  {
+    // por prefijo, como "eggR": agregar un campo (o una region) no debe tirar
+    // un huevo ya sorteado
+    size_t have = prefs.getBytesLength("egg2");
+    if (have >= offsetof(StoredEgg, eggByRegion) && have <= sizeof(StoredEgg))
+      prefs.getBytes("egg2", &storedEgg, have);
+  }
   if (storedEgg.eggTarget < 1 || storedEgg.eggTarget > DEX_COUNT) storedEgg = StoredEgg();
 }

@@ -15,7 +15,10 @@ FakeWire Wire;
 volatile int g_touchX = 0, g_touchY = 0;
 volatile bool g_touchDown = false;
 bool wasPressed = false;
-uint32_t millis() { return 0; }
+// Un reloj que el test adelanta: una ceremonia termina cuando millis() pasa de
+// ceremonyUntil, asi que con el reloj parado no acabaria nunca.
+static uint32_t gNow = 1;
+uint32_t millis() { return gNow; }
 void FakeESP::restart() { exit(0); }
 int FakeSerial::available() { return 0; }
 String FakeSerial::readStringUntil(char) { return String(""); }
@@ -104,8 +107,133 @@ static void testStoredEgg() {
   ck(!p.restoreEgg(), "no hay segundo huevo que restaurar");
 }
 
+// Termina la ceremonia como lo hace el firmware: dejando pasar el tiempo hasta
+// Pet::update(), no llamando a las dos mitades a mano.
+static void finish(Pet &p) {
+  gNow += CEREMONY_MS + 1000;
+  p.update(gNow);
+}
+
+// Una mascota viva, adulta, lista para despedirse, con un huevo apartado.
+static int16_t liveWithStoredEgg(Pet &p, int16_t dex) {
+  p.begin();
+  p.dbgHatchAs(4, false);
+  p.registerCaught(4, false);
+  p.newEgg();
+  int16_t target = p.eggPeek();
+  if (!p.stashEgg()) printf("FAIL  (preparacion) no se pudo guardar el huevo\n"), bad++;
+  PartyMon m;
+  m.dex = dex; m.level = 10;
+  p.raiseFrom(m, PartyLife());
+  p.fullness = p.joy = p.energy = p.hygiene = 100;
+  return target;
+}
+
+static void testCeremonyRestoresEgg() {
+  {  // a) farewell con huevo apartado: el huevo vuelve, la criatura se guarda
+    Pet p;
+    int16_t target = liveWithStoredEgg(p, 7);
+    p.startFarewell();
+    finish(p);
+    ck(p.isEgg() && p.eggPeek() == target, "al terminar, el huevo apartado es el activo");
+    ck(p.endedKind == CER_FAREWELL && p.endedLife.valid && p.endedMon.dex == 7,
+       "y la criatura que se va sale con su vida");
+    ck(!p.hasStoredEgg(), "ya no queda huevo apartado");
+    Pet q;
+    q.begin();
+    ck(q.isEgg() && q.eggPeek() == target && !q.hasStoredEgg(),
+       "tras reiniciar: el huevo vivo es ese y no hay apartado");
+  }
+  {  // b) retirada anticipada: la deuda cae sobre el huevo restaurado
+    Pet p;
+    int16_t target = liveWithStoredEgg(p, 7);
+    ck(p.canRetireNow(), "(se puede retirar la criada)");
+    p.startRetire();
+    ck(p.retireIsEarly(), "(es una retirada anticipada)");
+    finish(p);
+    ck(p.isEgg() && p.eggPeek() == target, "el huevo apartado vuelve tambien tras retirar");
+    ck(p.evoPenalty() == EVO_PENALTY_LEVELS, "con la deuda de la retirada anticipada");
+    ck(p.endedKind == CER_NONE, "y una retirada anticipada no guarda nada");
+  }
+  {  // c) fuga: el huevo vuelve y nada se guarda
+    Pet p;
+    int16_t target = liveWithStoredEgg(p, 7);
+    p.startRunaway();
+    finish(p);
+    ck(p.isEgg() && p.eggPeek() == target && !p.hasStoredEgg(), "tras una fuga vuelve el huevo apartado");
+    ck(p.endedKind == CER_NONE, "y la huida no guarda nada");
+  }
+}
+
+static void testBlessOnce() {
+  Pet p;
+  p.begin();
+  PartyMon m;
+  m.dex = 7; m.level = 10;
+  p.raiseFrom(m, PartyLife());
+  p.startFarewell();
+  ck(p.lastEnd == CER_FAREWELL, "la primera despedida bendice el huevo siguiente");
+  finish(p);
+  ck(p.endedKind == CER_FAREWELL && p.endedLife.blessUsed == 1, "y la criatura sale marcada como ya bendecida");
+  PartyMon m2 = p.endedMon;
+  PartyLife l2 = p.endedLife;
+  p.endedKind = CER_NONE;
+
+  p.raiseFrom(m2, l2);
+  p.fullness = p.joy = p.energy = p.hygiene = 100;
+  p.startFarewell();
+  ck(p.lastEnd == CER_RELEASE, "criada de nuevo, su despedida ya no bendice (neutra)");
+  Pet q;
+  q.begin();   // la marca se persiste
+  ck(!q.isEgg() && q.lastEnd == CER_RELEASE, "(la despedida neutra sobrevive a un reinicio)");
+
+  // y una criatura nueva vuelve a poder bendecir
+  Pet r;
+  r.begin();
+  r.dbgHatchAs(1, false);
+  r.fullness = r.joy = r.energy = r.hygiene = 100;
+  r.startFarewell();
+  ck(r.lastEnd == CER_FAREWELL, "una criatura recien nacida si bendice");
+}
+
+static void testNoLeaks() {
+  Pet p;
+  p.begin();
+  PartyMon m;
+  m.dex = 7; m.level = 10;
+  p.raiseFrom(m, PartyLife());
+  p.toggleLight();
+  ck(p.sleepAuto == SLEEP_PLAYER, "(toggleLight deja SLEEP_PLAYER)");
+  p.raiseFrom(m, PartyLife());
+  ck(p.sleepAuto == SLEEP_NONE, "criar a otro no hereda el modo de sueno del jugador");
+}
+
+static void testLifeRoundTrip() {
+  Pet p;
+  p.begin();
+  PartyMon m;
+  m.dex = 4; m.level = 12;
+  PartyLife l;
+  l.valid = 1; l.bond = 40; l.bondToday = 9; l.weight = 7;
+  l.careMistakes = 3; l.mistakeCooldown = 2; l.berryKnown = 1;
+  l.lastLearnLevel = 17; l.evoPen = 5; l.evoDeclinedLv = 14;
+  l.goodTicks = 321; l.ageMinutes = 5000; l.farDeclinedAge = 6000; l.blessUsed = 1;
+  p.raiseFrom(m, l);
+  PartyMon m2; PartyLife o;
+  p.bankFull(m2, o);
+  ck(o.valid && o.bond == 40 && o.weight == 7 && o.careMistakes == 3 && o.mistakeCooldown == 2 &&
+     o.berryKnown == 1 && o.lastLearnLevel == 17 && o.evoPen == 5 && o.evoDeclinedLv == 14 &&
+     o.goodTicks == 321 && o.ageMinutes == 5000 && o.farDeclinedAge == 6000 && o.blessUsed == 1,
+     "toda la vida sobrevive a raiseFrom + bankFull");
+  ck(o.bondToday == 0, "salvo el tope diario de vinculo, que no se restaura");
+}
+
 int main() {
   testPartyLife();
+  testCeremonyRestoresEgg();
+  testBlessOnce();
+  testNoLeaks();
+  testLifeRoundTrip();
   testBankRaise();
   testStoredEgg();
   printf(bad ? "%d FAILED\n" : "all passed\n", bad);

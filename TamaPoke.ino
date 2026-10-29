@@ -1094,7 +1094,7 @@ void handleSerial() {
     // Prints the whole save as a block of IMPORT commands. Pasting that block
     // back is the restore -- there is no separate format to get wrong, and no
     // single 2000-character line for a terminal to mangle.
-    static uint8_t buf[2048];
+    static uint8_t buf[4096];   // la copia completa ya pasa de 2 KB
     size_t n = saveExport(buf, sizeof(buf));
     if (!n) { Serial.println("EXPORT FAIL"); return; }
     Serial.printf("# TamaPoke save, %u bytes. Paste this whole block back.\n",
@@ -1108,7 +1108,7 @@ void handleSerial() {
   } else if (line.startsWith("IMPORT")) {
     // IMPORT <hex>   append a chunk
     // IMPORT         commit what has been appended
-    static uint8_t in[2048];
+    static uint8_t in[4096];
     static size_t inN = 0;
     String hex = line.substring(6);
     hex.trim();

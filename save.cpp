@@ -22,6 +22,7 @@ const SaveField SAVE_FIELDS[] = {
   // flags
   { "bk", SK_BOOL },    { "shy", SK_BOOL },   { "eshy", SK_BOOL },
   { "stpk", SK_BOOL },  { "evop", SK_U8 },    { "slpa", SK_U8 },    { "rtpn", SK_BOOL },
+  { "bless", SK_BOOL },                            // ya dio su bendicion de despedida (pet.h)
   // the player: outlives every creature, which is exactly why it must be here
   { "tnam", SK_STR },   { "avtr", SK_U8 },    { "badg", SK_U16 },
   { "reg", SK_U8 },     { "eggR", SK_BYTES },

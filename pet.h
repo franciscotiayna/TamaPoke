@@ -83,6 +83,7 @@ uint8_t nextAvailableRegion(uint8_t from);
 
 // Un huevo apartado al poner a criar a otro (CRIAR con un huevo esperando).
 // Conserva lo ya sorteado (especie, shiny) y su progreso. Clave NVS "egg2".
+// Solo se AGREGA al final, nunca se reordena: load() lee por prefijo.
 struct StoredEgg {
   uint8_t valid = 0;
   uint8_t eggTaps = 0;
@@ -223,7 +224,9 @@ public:
   void bankFull(PartyMon &m, PartyLife &l) const;
   void raiseFrom(const PartyMon &m, const PartyLife &l);
   bool hasStoredEgg() const { return storedEgg.valid != 0; }
-  bool stashEgg();      // aparta el huevo activo; false si no es huevo o ya hay uno
+  // aparta el huevo activo; false si no es huevo o ya hay uno. Quien llame NO
+  // debe criar a otro encima de un huevo vivo si esto devuelve false.
+  [[nodiscard]] bool stashEgg();
   bool restoreEgg();    // lo vuelve a poner como mascota activa
 
   // The player's own name, alongside the badges and the streak: it belongs to
@@ -478,6 +481,7 @@ private:
   uint32_t farDeclinedAge = 0;  // "quedaros juntos": no ofrecer despedida hasta esta edad
   bool starterPick = false;     // primera partida: esperando que el jugador elija inicial
   uint8_t evoPen = 0;           // levels added to this creature's evolution gate
+  bool blessUsed = false;       // ya dio la bendicion de despedida (una por vida)
   bool retirePending = false;   // an early retire is under way; newEgg() spends it
   uint8_t neglectTicks = 0;
   uint16_t goodTicks = 0;  // racha bien cuidado: forja la DEF
