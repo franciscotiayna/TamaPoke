@@ -290,7 +290,7 @@ static void raiseCaught(bool now);   // suspend() la usa para no perder una capt
 // durante una ceremonia, que tapa todo). Solo entonces es modal: si otra
 // pantalla esta encima, los toques son suyos y el dialogo espera.
 static bool raiseAskUp() {
-  return raiseAsk && !pet.ceremony && uiCurrentScreen() == SCR_MAIN;
+  return raiseAsk && !pet.ceremony && !pet.evolving() && uiCurrentScreen() == SCR_MAIN;
 }
 bool btlOver = false;
 bool btlWon = false;
@@ -771,7 +771,8 @@ void ensureMon() {
 
 // Se puede empezar un encuentro ahora? Ni huevo, ni ceremonia, ni dormida.
 static bool wildCanStart() {
-  return !pet.isEgg() && pet.ceremony == CER_NONE && !pet.sleeping && !pet.evolving();
+  return !pet.isEgg() && pet.ceremony == CER_NONE && !pet.sleeping && !pet.evolving() &&
+         !raiseAsk && !caughtPending && pet.endedKind == CER_NONE;
 }
 
 // Un aviso espontaneo solo sale sobre la pantalla principal, encendida y libre.
@@ -790,9 +791,12 @@ static void wildTick(uint32_t now) {
   bool dirty = false;
   uint32_t e = rtcEpoch();
   if (e && e / 86400 != gWild.day) { wildNewDay(gWild, e / 86400); dirty = true; }
-  if (pet.lastCareDay && pet.lastCareDay != gWild.paidCareDay) {
+  if (pet.lastCareDay > gWild.paidCareDay) {
     gWild.paidCareDay = pet.lastCareDay;
     wildEarn(gWild, wildCareCoins(pet.streak));
+    dirty = true;
+  } else if (pet.lastCareDay < gWild.paidCareDay) {   // WIPE o reloj atras: sin pagar
+    gWild.paidCareDay = pet.lastCareDay;
     dirty = true;
   }
   if (pet.totalMedals != gWild.paidMedals) {      // menos = tras un WIPE: solo re-sincroniza
@@ -916,7 +920,7 @@ void loop() {
   // 85 ms en juego/saco: margen seguro para que el redibujado no pise el envio
   // DMA del frame anterior (a 40-65 ms solapaba y causaba flashes negros; con
   // sprites grandes el dibujo tarda mas, asi que se deja colchon)
-  if (now - lastRender >= (uint32_t)((gameOpen || sackOpen || spdOpen) ? 85 : 100)) {
+  if (now - lastRender >= (uint32_t)((gameOpen || sackOpen || spdOpen || throwStage) ? 85 : 100)) {
     lastRender = now;
     render();
   }
@@ -936,7 +940,8 @@ void loop() {
 
 void suspend() {
   // Una captura aun sin "Criarlo ahora?" solo vive en la RAM, que el deep sleep
-  // borra: se manda al equipo o la caja antes de dormir.
+  // borra: se manda al equipo o la caja antes de dormir. Con los dos llenos se
+  // queda esperando hueco en la RAM (pet.endedMon) y el sueno la pierde.
   if (caughtPending) { caughtPending = false; raiseAsk = true; }
   if (raiseAsk) raiseCaught(false);
   pet.setClock(rtcEpoch());  // guarda la partida con la hora de ahora
@@ -1118,9 +1123,14 @@ void handleSerial() {
     } else {
       ok = wildRoll(pet, w);
     }
-    if (ok && wildCanStart() && !battleOpen) { exploreOpen = false; menuOpen = false; startWildBattle(w); }
+    bool started = false;
+    if (ok && wildCanStart() && uiCurrentScreen() == SCR_MAIN) {
+      exploreOpen = false;
+      startWildBattle(w);
+      started = battleOpen && btlWild;
+    }
     Serial.printf("wild %d lv%u tier%u shiny%d -> %s\n", w.dex, w.level, w.tier, w.shiny,
-                  battleOpen && btlWild ? "combate" : "no");
+                  started ? "combate" : "no");
     Serial.println("DONE");
   } else if (line.startsWith("COINS ")) {
     long v = line.substring(6).toInt();
@@ -1373,7 +1383,7 @@ void handleTouch() {
     // One question with one answer, so a new screen cannot be forgotten.
     if (!holdFired && !swallowGesture && uiCurrentScreen() == SCR_MAIN && millis() - tStart > 3000 &&
         abs(tXl - tX0) < 30 && abs(tYl - tY0) < 30 && inPetZone(tX0, tY0) &&
-        !pet.isEgg() && !confirmUntil && !pet.ceremony) {
+        !pet.isEgg() && !confirmUntil && !pet.ceremony && !raiseAsk) {
       confirmUntil = millis() + 10000;
       holdFired = true;
     }
@@ -1858,14 +1868,22 @@ static void caughtBank(const PartyMon &m, const PartyLife &l) {
   pet.endedKind = CER_RELEASE;   // el bucle solo mira != CER_NONE (ver loop())
 }
 
+// Se puede criar la capturada ahora? Un huevo se aparta (si no hay ya otro
+// apartado); una mascota va al equipo o la caja, nunca a esperar en la RAM: con
+// los dos llenos el "Si" se trata como "No".
+static bool raiseNowOk() {
+  if (pet.ceremony != CER_NONE || pet.evolving()) return false;
+  if (pet.isEgg()) return !pet.hasStoredEgg();
+  return !(party.isFull() && party.boxCount() >= BOX_SLOTS);
+}
+
 // "Criarlo ahora?". Si: la mascota actual se guarda con toda su vida (o el
 // huevo se aparta) y la capturada pasa a criarse. No: va al equipo o la caja.
 // Orden ante un corte: primero el equipo, luego la mascota. Un corte entre
-// medias duplica, no pierde.
+// medias duplica, no pierde. Hasta que se responde, la captura solo esta en la RAM.
 static void raiseCaught(bool now) {
   raiseAsk = false;
-  bool canNow = now && pet.ceremony == CER_NONE && !pet.evolving() &&
-                (!pet.isEgg() || !pet.hasStoredEgg());
+  bool canNow = now && raiseNowOk();
   if (canNow && pet.isEgg()) canNow = pet.stashEgg();   // si no se puede apartar, no se pisa
   if (!canNow) {
     caughtBank(caughtMon, caughtLife);
@@ -2640,10 +2658,8 @@ void render() {
     }
   }
 
-  if (raiseAskUp()) {
-    char q[40];
-    snprintf(q, sizeof(q), "%s", T(S_RAISE_Q));
-    drawConfirmPanel(q, T(S_RAISE_HINT), nullptr, UI_TRACK,
+  if (raiseAskUp()) {   // sin la pista cuando el "Si" acabaria siendo un "No"
+    drawConfirmPanel(T(S_RAISE_Q), raiseNowOk() ? T(S_RAISE_HINT) : nullptr, nullptr, UI_TRACK,
                      T(S_YES), UI_BAR_OK, UI_WHITE, T(S_NO), UI_TRACK, UI_INK);
   }
 
@@ -3672,6 +3688,8 @@ void startBattle(int16_t dex, uint8_t lvl) {
   btlWild = false;
   if (pet.isEgg() || pet.ceremony != CER_NONE) return;
   if (dex < 1 || dex > DEX_COUNT) return;
+  btlTrainer = -1;           // suelto: que no herede (ni pague) el del ultimo gimnasio
+  btlHard = false;           // ni su IA lista
   buildSquad(0, TRAINER_TEAM_MAX, 0xFFFF);
   if (!btlSquadN) return;
   // The opponent is built through Pet so it gets the same stat formula and the
@@ -3705,8 +3723,6 @@ void startBattle(int16_t dex, uint8_t lvl) {
 // salio del sorteo (sus IVs y su shiny) y la opcion BALL en el menu.
 void startWildBattle(const WildMon &w) {
   if (pet.isEgg() || pet.ceremony != CER_NONE) return;
-  btlTrainer = -1;           // startBattle no lo toca: que no herede el del ultimo gimnasio
-  btlHard = false;
   startBattle(w.dex, w.level);
   if (!battleOpen) return;
   Pet foe;                   // sin begin(): nunca escribe en la NVS (ver pet.h)
@@ -3794,26 +3810,37 @@ static void btlThrowFinish() {
     btlSay(T(S_FLED), btlFoe.name);
     btlOver = true;
     btlWon = false;
+    audioMusic(MUS_NONE);
     return;
   }
   TurnLog lg;
+  uint32_t now = millis();
   uint16_t hp0 = btlYou.hp;
   battleAct(btlFoe, btlYou, aiChooseMove(btlFoe, btlYou, false), lg);
   btlNarrate(btlFoe, btlYou, lg);
-  if (btlYou.hp < hp0) btlHitUntil[0] = millis() + BTL_HIT_MS;
-  if (btlFoe.fainted()) {      // se debilito solo (confusion, retroceso): se acabo, sin premio
-    btlFaintUntil[1] = millis() + BTL_FAINT_MS;
+  if (lg.damage && !lg.hurtSelf) btlLungeUntil[1] = now + BTL_LUNGE_MS;
+  if (!btlYou.fainted() && !btlFoe.fainted()) {   // quemadura/veneno, como en btlResolve
+    battleEndTurn(btlYou, lg);
+    if (lg.damage) btlNarrate(btlYou, btlYou, lg);
+    battleEndTurn(btlFoe, lg);
+    if (lg.damage) btlNarrate(btlFoe, btlFoe, lg);
+  }
+  if (btlYou.hp < hp0) btlHitUntil[0] = now + BTL_HIT_MS;
+  if (btlFoe.fainted()) {      // se debilito solo (confusion, retroceso, veneno): sin premio
+    btlFaintUntil[1] = now + BTL_FAINT_MS;
     btlOver = true;
     btlWon = false;
+    audioMusic(MUS_NONE);
     return;
   }
   if (btlYou.fainted()) {
     if (btlSquadAt + 1 < btlSquadN) {
-      btlFaintUntil[0] = millis() + BTL_FAINT_MS;
+      btlFaintUntil[0] = now + BTL_FAINT_MS;
       btlSwapWho = 0;          // el relevo sale al cerrar el mensaje (btlDoSwap)
     } else {
       btlOver = true;
       btlWon = false;
+      audioMusic(MUS_NONE);
       btlSay("%s", T(S_BTL_LOSE));
     }
   }
@@ -3822,7 +3849,10 @@ static void btlThrowFinish() {
 // Avanza la animacion; lo llama renderBattle en cada cuadro.
 static void btlThrowTick() {
   uint32_t t = millis() - throwT0;
-  if (throwStage == 1 && t > RING_MS + 150) btlThrowRelease(AIM_MISS);   // no toco
+  // el toque se puntua al apoyar (tStart) pero llega al levantar: si el dedo se
+  // apoyo a tiempo y sigue abajo, se le espera
+  bool held = wasPressed && tStart > throwT0 && tStart - throwT0 < RING_MS;
+  if (throwStage == 1 && t > RING_MS + (held ? 1500 : 150)) btlThrowRelease(AIM_MISS);   // no toco
   else if (throwStage == 2 && t > (uint32_t)((throwShakes < 3 ? throwShakes : 3) + 1) * SHAKE_MS)
     btlThrowFinish();
 }
@@ -4076,8 +4106,13 @@ static void btlResolve(uint8_t yourMove) {
     if (btlLink && btlLinkHost) lan.sendEnd(btlWon);
     if (btlLink) { btlSay("%s", btlWon ? T(S_BTL_WIN) : T(S_BTL_LOSE)); return; }
     if (btlWon && btlTrainer >= 0) { btlWinUntil = millis() + 60000; return; }
-    btlSay("%s", btlWon ? T(S_BTL_WIN) : T(S_BTL_LOSE));
-    if (btlWon && btlWild) btlSay(T(S_WILD_COINS_FMT), 5u);
+    if (btlWon && btlWild) {   // una linea: la narracion solo ensena 4
+      char c[20];
+      snprintf(c, sizeof(c), T(S_WILD_COINS_FMT), 5u);
+      btlSay("%s %s", T(S_BTL_WIN), c);
+    } else {
+      btlSay("%s", btlWon ? T(S_BTL_WIN) : T(S_BTL_LOSE));
+    }
   }
 }
 
@@ -4120,7 +4155,7 @@ static void btlSide(int tx, int ty, int sx, int sy, const Combatant &c, uint8_t 
     gfx->setCursor(tx + 18, ty + 28);
     gfx->print(T(AIL_STR[c.ailment]));
   }
-  if (who == 1 && throwStage == 2) return;   // el salvaje esta dentro de la bola
+  if (who == 1 && (throwStage == 2 || (btlWild && caughtPending))) return;   // dentro de la bola
   // a platform under each creature, so they stand in the scene rather than
   // floating over it
   uint32_t now = millis();
@@ -4487,7 +4522,11 @@ static void btlRun() {
 }
 
 void battleTap(int16_t x, int16_t y) {
-  if (throwStage == 1) { btlThrowRelease(aimFromRadius(ringRadius(millis() - throwT0))); return; }
+  if (throwStage == 1) {     // onTap llega al levantar: se puntua el momento de apoyar
+    uint32_t t = tStart > throwT0 ? tStart - throwT0 : 0;
+    btlThrowRelease(t >= RING_MS ? AIM_MISS : aimFromRadius(ringRadius(t)));   // tarde = fallo
+    return;
+  }
   if (throwStage == 2) return;   // los tambaleos no se interrumpen
   if (btlWinUntil) {          // dismiss the win screen and leave the fight
     btlWinUntil = 0;
