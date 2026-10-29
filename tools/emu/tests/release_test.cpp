@@ -202,14 +202,14 @@ int main(){
   // ---- CRIAR over a live pet swaps the two; nobody is lost
   //
   // Three storage states, three code paths: a free party slot, a full party with
-  // room in the box, and everything full (the in-place swap).
+  // room in the box, and everything full. Every one of them ends as a swap in
+  // the SAME slot -- the first two park the old pet in a spare slot first (so it
+  // is never only in RAM) and then move it into the chosen one's.
   {
-    // `oldAt`: where the old pet should end up. With a free party slot it takes
-    // that one (a brand new slot, so it is never only in RAM); otherwise it
-    // lands in the chosen one's slot.
+    // `oldAt`: where the old pet should end up -- always the chosen one's slot.
     struct Case { const char *name; int fillParty; int fillBox; int oldAt; };
     const Case cases[] = {
-      { "a free party slot", 2, 0, 2 },
+      { "a free party slot", 2, 0, 1 },
       { "a full party, room in the box", PARTY_SLOTS, 0, 1 },
       { "party and box both full", PARTY_SLOTS, BOX_SLOTS, 1 },
     };

@@ -388,6 +388,7 @@ bool Pet::restoreEgg() {
   blessUsed = false;
   sleepAuto = SLEEP_NONE;
   newMedal = 0;
+  learnQCount = 0;   // un huevo no aprende: SCR_LEARN con speciesId -1 se saldria de las tablas
   medalUntil = eatUntil = heartUntil = milestoneUntil = evolveUntil = 0;
   speciesId = -1;
   prevSpeciesId = -1;

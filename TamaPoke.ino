@@ -111,9 +111,9 @@ uint8_t cardPage = 0;         // 0 perfil, 1 stats+medallas
 // and is the only free surface left.
 bool menuOpen = false;
 #define MENU_X 73
-// Four rows: PARTY and GYMS came out, since a swipe right and a swipe left now
-// reach them directly. Sized to the bezel -- the panel is 320 wide, so 160 from
-// the centre, and sqrt(233^2 - 160^2) = 169 means it can only span y 64..402.
+// PARTY and GYMS have no rows: a swipe right and a swipe left reach them
+// directly. Sized to the bezel -- the panel is 320 wide, so 160 from the
+// centre, and sqrt(233^2 - 160^2) = 169 means it can only span y 64..402.
 #define MENU_Y 72
 #define MENU_W 320
 #define MENU_H 322
@@ -268,6 +268,12 @@ bool badgeArtExists(uint8_t region, uint8_t i) { return badgeArtFor(region, i) !
 Combatant btlYou, btlFoe;
 // ---------- encuentros salvajes (wild.cpp) ----------
 WildState gWild;             // monedas, bolas y contadores del dia
+// Cambios que pueden esperar (tienda, aviso "!"): cada escritura NVS congela la
+// flash ~1 s, asi que se vuelcan al salir de EXPLORAR, con la pantalla atenuada
+// o antes de dormir (wildFlush). Gastos en combate y premios guardan al momento.
+bool wildDirty = false;
+static void wildSaveNow() { wildSave(gWild); wildDirty = false; }
+static void wildFlush() { if (wildDirty) wildSaveNow(); }
 WildMon wildMon;             // el salvaje del combate en curso
 bool btlWild = false;        // el combate actual es un encuentro salvaje
 bool exploreOpen = false;    // pantalla EXPLORAR
@@ -791,10 +797,19 @@ static bool wildCanStart() {
          !raiseAsk && !caughtPending && pet.endedKind == CER_NONE;
 }
 
-// Un aviso espontaneo solo sale sobre la pantalla principal, encendida y libre.
+// Un aviso espontaneo solo sale sobre la pantalla principal, encendida y libre
+// (SCR_MAIN ya excluye el menu, y wildCanStart el "Criarlo ahora?").
 static bool wildCanAmbient() {
-  return wildCanStart() && !screenOff && !menuOpen && !raiseAsk &&
-         uiCurrentScreen() == SCR_MAIN;
+  return wildCanStart() && !screenOff && uiCurrentScreen() == SCR_MAIN;
+}
+
+// Un dialogo de la pantalla principal esta arriba (comida, soltar, decision, o
+// el aviso del equipo). Son marcas de tiempo, pero se miran distintas de cero
+// igual que onTap(), que les da el toque mientras no las limpie render(). No
+// entra en wildCanAmbient(): abrir la comida no debe gastar un aviso visible,
+// solo ocultarlo (y hacerlo intocable) mientras el dialogo esta arriba.
+static bool mainDialogUp() {
+  return choiceKind || confirmUntil || feedMenuUntil || partyBannerUntil;
 }
 
 // Una vez por segundo: dia nuevo, monedas por el primer cuidado del dia y por
@@ -824,15 +839,15 @@ static void wildTick(uint32_t now) {
   if (now - lastAmb >= 60000) {
     lastAmb = now;
     if (!wildBubbleUntil && gWild.ambient < WILD_AMBIENT_PER_DAY && wildCanAmbient() &&
-        random(60) == 0) {
+        !mainDialogUp() && random(60) == 0) {
       wildBubbleUntil = now + 30000;
       gWild.ambient++;         // el tope diario cuenta los avisos mostrados, no los tocados
-      dirty = true;
+      wildDirty = true;        // puede esperar: se vuelca al atenuar la pantalla
       sfxPlay(SFX_MEDAL);
     }
   }
   if (wildBubbleUntil && (now > wildBubbleUntil || !wildCanAmbient())) wildBubbleUntil = 0;
-  if (dirty) wildSave(gWild);
+  if (dirty) wildSaveNow();
 }
 
 void loop() {
@@ -919,6 +934,7 @@ void loop() {
   if (pet.savePending() && (screenOff || dimStage >= 1 || pet.sleeping)) {
     pet.flushSave();
   }
+  if (wildDirty && (screenOff || dimStage >= 1 || pet.sleeping)) wildFlush();
 
   // anota la hora real cada 30 s (se persiste en cada save del juego)
   static uint32_t lastClock = 0;
@@ -964,6 +980,7 @@ void suspend() {
   if (caughtPending) { caughtPending = false; raiseAsk = true; }
   if (raiseAsk) raiseCaught(false);
   pet.setClock(rtcEpoch());  // guarda la partida con la hora de ahora
+  wildFlush();               // compras y avisos aun sin volcar
 
   gfx->fillScreen(0x0000);  // aviso: luna y "z z"
   gfx->fillCircle(233, 220, 46, UI_INK_NIGHT);
@@ -1153,12 +1170,12 @@ void handleSerial() {
   } else if (line.startsWith("COINS ")) {
     long v = line.substring(6).toInt();
     gWild.coins = (uint16_t)(v < 0 ? 0 : v > WILD_COINS_MAX ? WILD_COINS_MAX : v);
-    wildSave(gWild);
+    wildSaveNow();
     Serial.println("DONE");
   } else if (line.startsWith("BALLS ")) {
     long v = line.substring(6).toInt();
     gWild.balls = (uint8_t)(v < 0 ? 0 : v > WILD_BALLS_MAX ? WILD_BALLS_MAX : v);
-    wildSave(gWild);
+    wildSaveNow();
     Serial.println("DONE");
   } else if (line == "WILDINFO") {
     Serial.printf("coins=%u balls=%u explores=%u/%u ambient=%u/%u day=%u egg=%d\n",
@@ -1428,7 +1445,7 @@ void onSwipeV(int dir) {
   if (uiCurrentScreen() == SCR_DEXPICK || uiCurrentScreen() == SCR_GYMPICK)
     return;                 // on the chooser, vertical does nothing: pick a row
   if (menuOpen) { menuOpen = false; return; }   // any swipe closes the menu
-  if (exploreOpen) { exploreOpen = false; return; }
+  if (exploreOpen) { exploreOpen = false; wildFlush(); return; }
   if (battleOpen) return;   // no swiping out of a fight
   if (pickOpen) { pickOpen = false; return; }
   if (lanOpen) { lanLeave(); lanOpen = false; return; }
@@ -1481,21 +1498,16 @@ void onSwipeV(int dir) {
   }
 }
 
-// party screen: pick a slot (when a newcomer is waiting) or just leave
-// A banked creature's sheet: its moves above all, since typing alone does not
-// tell you whether that Lapras still has ICE BEAM -- and in hard mode that is
-// what decides the fight.
-// The detail sheet, shared by the party and the box so the two cannot drift.
-// `fromBox` picks which action the LEFT button offers; the right one is always
-// RELEASE, which is irreversible and therefore always asks first.
 // Se puede poner a criar a otro ahora? No en mitad de una ceremonia o una
 // evolucion, ni eligiendo inicial, ni con un huevo esperando si ya hay otro
-// apartado (solo cabe uno). Vale para CRIAR desde el equipo, que es un
+// apartado (solo cabe uno), ni con un movimiento por aprender pendiente (criar a
+// otro tiraria la oferta, y con un huevo SCR_LEARN pintaria speciesId -1).
+// Vale para CRIAR desde el equipo, que es un
 // intercambio en el sitio; quien ademas necesite guardar a la actual en un hueco
 // libre (la captura, el huevo apartado) mira tambien storageFull().
 static bool canRaiseNow() {
   return pet.ceremony == CER_NONE && !pet.evolving() && !pet.awaitingStarter() &&
-         !(pet.isEgg() && pet.hasStoredEgg());
+         !pet.hasLearnOffer() && !(pet.isEgg() && pet.hasStoredEgg());
 }
 
 // Equipo y caja llenos: no queda ningun hueco donde guardar a nadie.
@@ -1510,6 +1522,13 @@ static bool eggRaiseOk() {
   return pet.hasStoredEgg() && !pet.isEgg() && canRaiseNow() && !storageFull();
 }
 
+// party screen: pick a slot (when a newcomer is waiting) or just leave
+// A banked creature's sheet: its moves above all, since typing alone does not
+// tell you whether that Lapras still has ICE BEAM -- and in hard mode that is
+// what decides the fight.
+// The detail sheet, shared by the party and the box so the two cannot drift.
+// `fromBox` picks which action the LEFT button offers; the right one is always
+// RELEASE, which is irreversible and therefore always asks first.
 void renderMonSheet(const PartyMon &m, bool fromBox) {
   const DexEntry &d = DEX_TBL[m.dex];
   gfx->fillScreen(RGB565_BLACK);
@@ -1769,12 +1788,19 @@ void partyTap(int16_t x, int16_t y) {
         PartyMon om; PartyLife ol;
         pet.bankFull(om, ol);
         int box = party.boxFirstFree();
-        if (party.firstFree() >= 0) {
-          // Hueco libre en el equipo: la actual entra ahi (duplicada un momento),
-          // m pasa a criarse y se libera su hueco.
+        int j = party.firstFree();
+        if (j >= 0) {
+          // Hueco libre en el equipo: la actual entra en el hueco j (duplicada un
+          // momento), m pasa a criarse (sigue tambien en i), y al final la actual
+          // pasa al hueco i de m y j se vacia, todo en UNA escritura del equipo,
+          // para que el intercambio quede "en el mismo sitio".
           party.add(om, ol);
           pet.raiseFrom(m, l);
-          party.releaseAt(i);
+          party.slots[i] = om;
+          party.life[i] = ol;
+          party.slots[j] = PartyMon();
+          party.life[j] = PartyLife();
+          party.save();
         } else if (box >= 0) {
           // Equipo lleno: la actual va a la caja, m pasa a criarse, y la actual
           // ocupa el hueco i de m antes de vaciar el de la caja, para que el
@@ -1785,10 +1811,11 @@ void partyTap(int16_t x, int16_t y) {
           party.replaceAt(i, om, ol);
           party.boxReleaseAt((uint8_t)box);
         } else {
-          // Todo lleno: intercambio en el mismo hueco. Hay una ventana minima e
-          // inevitable entre las dos escrituras: tras raiseFrom la NVS tiene a m
-          // viva y en el hueco i, y la actual solo en la RAM hasta replaceAt.
-          // (Al reves seria igual de corta y perderia a m en vez de a la actual.)
+          // Todo lleno: intercambio en el mismo hueco, sin sitio para un
+          // duplicado. La actual solo esta a salvo en la RAM durante TODO el
+          // pet.save() de raiseFrom (unas 50 claves) y el party.save() de
+          // replaceAt: un corte ahi la pierde. Al reves se perderia la elegida.
+          // Aceptado y documentado (sin clave de diario).
           pet.raiseFrom(m, l);
           party.replaceAt(i, om, ol);
         }
@@ -1882,7 +1909,7 @@ void onSwipe(int dir) {
   if (pet.awaitingStarter()) return;  // bloqueado durante la eleccion de inicial
   if (raiseAskUp()) return;           // "Criarlo ahora?" es modal: se responde con un boton
   if (menuOpen) { menuOpen = false; return; }   // any swipe closes the menu
-  if (exploreOpen) { exploreOpen = false; return; }
+  if (exploreOpen) { exploreOpen = false; wildFlush(); return; }
   if (battleOpen) return;   // no swiping out of a fight
   if (pickOpen) {   // horizontal pages the candidates, as everywhere else
     uint8_t pages = (pickCandidates() + PICK_PER_PAGE - 1) / PICK_PER_PAGE;
@@ -2324,7 +2351,7 @@ void onTap(int16_t x, int16_t y) {
   // el aviso "!" va despues de los botones de evolucion/despedida (su radio tactil
   // solo roza el borde de estos y ahi ganan ellos) y antes de la franja del
   // nombre y de la caricia, que si quedan debajo
-  if (wildBubbleUntil) {
+  if (wildBubbleUntil && !mainDialogUp()) {   // oculto bajo un dialogo: intocable
     int dx = x - WILD_BUB_X, dy = y - WILD_BUB_Y;
     if (dx * dx + dy * dy <= WILD_BUB_HIT * WILD_BUB_HIT) {
       wildBubbleUntil = 0;     // ya se conto al aparecer (wildTick)
@@ -2730,10 +2757,10 @@ void render() {
     gfx->print("Zz");
   }
 
-  // aviso espontaneo de encuentro: tocarlo abre el combate. Se dibuja ANTES de
-  // los dialogos (comida, soltar, decision, aviso del equipo) para que estos lo
-  // tapen: mientras estan arriba son ellos los que reciben el toque.
-  if (wildBubbleUntil && uiCurrentScreen() == SCR_MAIN && !menuOpen) {
+  // aviso espontaneo de encuentro: tocarlo abre el combate. Con un dialogo de
+  // la pantalla principal arriba no se dibuja (ni se toca, ver onTap): ese
+  // dialogo se queda el toque y el aviso esperaria debajo, invisible.
+  if (wildBubbleUntil && uiCurrentScreen() == SCR_MAIN && !mainDialogUp()) {
     gfx->fillCircle(WILD_BUB_X, WILD_BUB_Y, WILD_BUB_R, UI_BAR_WARN);
     gfx->drawCircle(WILD_BUB_X, WILD_BUB_Y, WILD_BUB_R, UI_INK);
     gfx->setTextColor(UI_INK);
@@ -3914,7 +3941,7 @@ static uint8_t aimFromRadius(int r) {
 static void btlThrowStart() {
   if (!gWild.balls) { sfxPlay(SFX_DENY); btlSay("%s", T(S_NO_BALLS)); return; }
   gWild.balls--;
-  wildSave(gWild);
+  wildSaveNow();
   throwStage = 1;
   throwT0 = millis();
   sfxPlay(SFX_TAP);
@@ -3983,7 +4010,7 @@ static void btlThrowFinish() {
     btlWon = true;
     btlTrainGain = 0;
     wildEarn(gWild, 5);
-    wildSave(gWild);
+    wildSaveNow();
     if (btlPetIn) btlTrainGain = pet.rewardTraining(1, btlTrainWhich);
     audioMusic(MUS_VICTORY);
     sfxPlay(SFX_VICTORY);
@@ -4252,10 +4279,10 @@ static void btlResolve(uint8_t yourMove) {
       btlTrainGain = pet.rewardTraining(amt, btlTrainWhich);
     }
     // monedas: medalla nueva 50, repetir un gimnasio 15, debilitar un salvaje 5
-    if (btlWon && btlTrainer >= 0) { wildEarn(gWild, btlNewBadge ? 50 : 15); wildSave(gWild); }
+    if (btlWon && btlTrainer >= 0) { wildEarn(gWild, btlNewBadge ? 50 : 15); wildSaveNow(); }
     if (btlWon && btlWild) {
       wildEarn(gWild, 5);
-      wildSave(gWild);
+      wildSaveNow();
       if (btlPetIn) btlTrainGain = pet.rewardTraining(1, btlTrainWhich);
     }
     audioMusic(btlWon ? MUS_VICTORY : MUS_NONE);
@@ -5899,17 +5926,17 @@ void exploreTap(int16_t x, int16_t y) {
     if (!battleOpen || !btlWild) { sfxPlay(SFX_DENY); return; }
     exploreOpen = false;
     wildUseExplore(gWild);
-    wildSave(gWild);
+    wildSaveNow();
     return;
   }
   for (int i = 0; i < 2; i++) {
     if (!expHit(x, y, i ? EXP_BUY10_Y : EXP_BUY1_Y, EXP_BUY_H)) continue;
     if (!wildBuy(gWild, i ? 10 : 1)) { sfxPlay(SFX_DENY); return; }
-    wildSave(gWild);
+    wildDirty = true;          // se guarda al salir de EXPLORAR (wildFlush)
     sfxPlay(SFX_MEDAL);
     return;
   }
-  if (y > 380) { exploreOpen = false; sfxPlay(SFX_TAP); }   // volver
+  if (y > 380) { exploreOpen = false; wildFlush(); sfxPlay(SFX_TAP); }   // volver
 }
 
 // Row labels are built fresh each frame because two of them carry live counts.
