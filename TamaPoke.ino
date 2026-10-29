@@ -4726,6 +4726,10 @@ void battleTap(int16_t x, int16_t y) {
     btlMsgCount = 0;
     if (btlOver) {
       btlFreeSprites();
+      // la fanfarria de victoria es larga: sin esto seguia sonando en la
+      // pantalla principal tras un combate salvaje (que no tiene pantalla de
+      // victoria que la corte, como los gimnasios)
+      audioMusic(MUS_NONE);
       battleOpen = false;
       // Back to the LAN screen rather than all the way out: that is where a
       // rematch is offered, and re-pairing for every fight would be tedious.
