@@ -2,6 +2,7 @@
 #include <Preferences.h>
 #include "moves.h"
 #include "noart.h"   // speciesHasArt(): como pet.cpp
+#include "catchrate.h"
 
 void wildNewDay(WildState &w, uint32_t day) {
   if (day == w.day) return;
@@ -37,8 +38,11 @@ bool wildUseExplore(WildState &w) {
   return true;
 }
 
-uint8_t wildCatchValue(uint8_t tier, uint16_t hp, uint16_t maxHp, uint8_t ailment, uint8_t aim) {
-  uint32_t rate = tier == R_LEGENDARIO ? 3 : tier == R_RARO ? 25 : 45;
+uint8_t wildCatchRate(int16_t dex) {
+  return (dex >= 1 && dex <= DEX_COUNT) ? CATCH_RATE[dex] : 45;
+}
+
+uint8_t wildCatchValue(uint8_t rate, uint16_t hp, uint16_t maxHp, uint8_t ailment, uint8_t aim) {
   if (maxHp == 0) maxHp = 1;
   if (hp > maxHp) hp = maxHp;
   // estado y punteria como fracciones, todo antes de UNA sola division
@@ -48,7 +52,7 @@ uint8_t wildCatchValue(uint8_t tier, uint16_t hp, uint16_t maxHp, uint8_t ailmen
   if (aim == AIM_PERFECT) aNum = 2;
   else if (aim == AIM_GOOD) { aNum = 3; aDen = 2; }
   else if (aim == AIM_MISS) aDen = 2;
-  uint32_t num = rate * (3u * maxHp - 2u * hp) * sNum * aNum;
+  uint32_t num = (uint32_t)rate * (3u * maxHp - 2u * hp) * sNum * aNum;   // max ~2e8: cabe
   uint32_t den = 3u * maxHp * sDen * aDen;
   uint32_t a = num / den;
   if (a < 1) a = 1;

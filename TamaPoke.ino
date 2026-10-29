@@ -3949,7 +3949,7 @@ static void btlThrowStart() {
 
 static void btlThrowRelease(uint8_t aim) {
   throwAim = aim;
-  uint8_t a = wildCatchValue(wildMon.tier, btlFoe.hp, btlFoe.maxHp, btlFoe.ailment, aim);
+  uint8_t a = wildCatchValue(wildCatchRate(wildMon.dex), btlFoe.hp, btlFoe.maxHp, btlFoe.ailment, aim);
   throwShakes = wildShakes(a);
   throwStage = 2;
   throwT0 = millis();

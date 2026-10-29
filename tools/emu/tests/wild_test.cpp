@@ -55,13 +55,20 @@ static void testEconomy() {
 }
 
 static void testCatch() {
-  ck(wildCatchValue(R_COMUN, 100, 100, AIL_NONE, AIM_OK) == 15, "comun a vida llena: 15");
-  ck(wildCatchValue(R_COMUN, 1, 100, AIL_NONE, AIM_OK) == 44, "comun a 1 PS: 44");
-// 45*(300-2)*2*2/300 en una sola division = 178
-  ck(wildCatchValue(R_COMUN, 1, 100, AIL_SLEEP, AIM_PERFECT) == 178, "dormido y perfecto: x4");
-  ck(wildCatchValue(R_RARO, 100, 100, AIL_PARA, AIM_GOOD) == 18, "raro, paralizado y bien: 8 x3/2 x3/2");
-  ck(wildCatchValue(R_LEGENDARIO, 100, 100, AIL_NONE, AIM_MISS) == 1, "nunca baja de 1");
-  ck(wildCatchValue(R_COMUN, 0, 0, AIL_SLEEP, AIM_PERFECT) == 180, "vida 0/0 no divide por cero");
+  // ratios reales de los juegos (catchrate.h, PokeAPI)
+  ck(wildCatchRate(19) == 255 && wildCatchRate(16) == 255, "Rattata y Pidgey: ratio 255");
+  ck(wildCatchRate(4) == 45 && wildCatchRate(133) == 45, "Charmander y Eevee: ratio 45");
+  ck(wildCatchRate(150) == 3 && wildCatchRate(144) == 3, "Mewtwo y Articuno: ratio 3");
+  ck(wildCatchRate(0) == 45 && wildCatchRate(DEX_COUNT + 1) == 45, "dex fuera de rango: 45");
+  ck(wildCatchValue(255, 100, 100, AIL_NONE, AIM_OK) == 85, "ratio 255 a vida llena: 85 (~33%)");
+  ck(wildCatchValue(255, 1, 100, AIL_NONE, AIM_PERFECT) == 255, "ratio 255 a 1 PS y perfecto: seguro");
+  ck(wildCatchValue(45, 100, 100, AIL_NONE, AIM_OK) == 15, "ratio 45 a vida llena: 15");
+  ck(wildCatchValue(45, 1, 100, AIL_NONE, AIM_OK) == 44, "ratio 45 a 1 PS: 44");
+  // 45*(300-2)*2*2/300 en una sola division = 178
+  ck(wildCatchValue(45, 1, 100, AIL_SLEEP, AIM_PERFECT) == 178, "dormido y perfecto: x4");
+  ck(wildCatchValue(25, 100, 100, AIL_PARA, AIM_GOOD) == 18, "ratio 25, paralizado y bien: 8 x3/2 x3/2");
+  ck(wildCatchValue(3, 100, 100, AIL_NONE, AIM_MISS) == 1, "nunca baja de 1");
+  ck(wildCatchValue(45, 0, 0, AIL_SLEEP, AIM_PERFECT) == 180, "vida 0/0 no divide por cero");
   ck(wildShakes(255) == 3, "a=255 siempre captura");
   // una sola tirada decide: probabilidad a/255, no (a/255)^3
   int c128 = 0;

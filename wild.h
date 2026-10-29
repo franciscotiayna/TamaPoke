@@ -24,7 +24,7 @@ enum : uint8_t { AIM_MISS = 0, AIM_OK, AIM_GOOD, AIM_PERFECT };
 struct WildMon {
   int16_t dex = 0;
   uint8_t level = 1;
-  uint8_t tier = R_COMUN;     // R_COMUN / R_RARO / R_LEGENDARIO: fija la tasa de captura
+  uint8_t tier = R_COMUN;     // R_COMUN / R_RARO / R_LEGENDARIO: cuanto aparece y su nivel
   bool shiny = false;
   uint8_t ivAtk = 16, ivDef = 16, ivSpe = 16, ivHp = 16;
 };
@@ -48,11 +48,14 @@ bool wildBuy(WildState &w, uint8_t n);         // false = no alcanza o pasaria d
 uint16_t wildCareCoins(uint16_t streak);       // premio del primer cuidado del dia
 bool wildUseExplore(WildState &w);             // gasta una busqueda; false si no quedan
 
-// Valor de captura 1..255, al estilo de los juegos:
-//   tasa x (3*hpMax - 2*hp) / (3*hpMax) x estado x punteria
-// tasa: comun 45, raro 25, legendario 3. Dormido/congelado x2, paralizado,
-// quemado o envenenado x3/2. Punteria: perfecto x2, bien x3/2, fallo x1/2.
-uint8_t wildCatchValue(uint8_t tier, uint16_t hp, uint16_t maxHp, uint8_t ailment, uint8_t aim);
+// Ratio de captura de la especie (0-255), el de los juegos: Rattata 255, los
+// iniciales 45, los legendarios 3. Tabla en catchrate.h (tools/gen_catch.py).
+uint8_t wildCatchRate(int16_t dex);
+// Valor de captura 1..255, la formula de los juegos (gen 3 en adelante):
+//   ratio x (3*hpMax - 2*hp) / (3*hpMax) x estado x punteria
+// Dormido/congelado x2; paralizado, quemado o envenenado x3/2. La punteria del
+// anillo hace de tipo de bola: perfecto x2, bien x3/2, fallo x1/2.
+uint8_t wildCatchValue(uint8_t rate, uint16_t hp, uint16_t maxHp, uint8_t ailment, uint8_t aim);
 // Una sola tirada decide la captura (probabilidad a/255); los tambaleos son solo
 // animacion: 3 si entra, 0-2 al azar si escapa.
 uint8_t wildShakes(uint8_t a);
