@@ -130,6 +130,27 @@ enum StrId : uint8_t {
   S_RELEASE_GONE,   // ...and the warning under it: this one does not come back
   S_BOX_TAKE,       // box detail sheet: move this creature into the party
   S_RETIRE_GONE,    // retire confirm: an early retire is not banked either
+  // encuentros salvajes y criar a demanda (wild.cpp)
+  S_EXPLORE,        // fila del menu y titulo de su pantalla
+  S_SEARCH_FMT,     // "BUSCAR %u/%u"
+  S_BALLS_FMT,      // "POKEBALLS %u"
+  S_COINS_FMT,      // "MONEDAS %u"
+  S_BUY1,           // tienda: +1 bola
+  S_BUY10,          // tienda: +10 bolas
+  S_NO_BALLS,       // explorar sin bolas
+  S_NO_SEARCH,      // sin busquedas hoy
+  S_WILD_APPEARS,   // "Un %s salvaje!"
+  S_BALL,           // opcion del combate
+  S_AIM_PERFECT, S_AIM_GOOD,
+  S_CAUGHT,         // "Atrapaste a %s!"
+  S_BROKE_FREE,     // "%s se escapo de la bola!"
+  S_FLED,           // "%s huyo!"
+  S_RAISE_Q,        // "Criarlo ahora?"
+  S_RAISE_HINT,     // que pasa con la mascota actual
+  S_RAISE,          // boton de la ficha del equipo
+  S_RAISE_NO,       // por que no se puede criar ahora
+  S_EGG_SLOT,       // pildora del huevo guardado
+  S_WILD_COINS_FMT, // "+%u monedas"
   STR_COUNT
 };
 
