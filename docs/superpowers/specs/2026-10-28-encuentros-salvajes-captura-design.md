@@ -104,10 +104,12 @@ distancia al círculo objetivo:
 **Probabilidad** (sobre 255, entera):
 
 ```
-a = tasa × (3·hpMax − 2·hp) × estado × punteria / (3·hpMax)
+a = ratio × (3·hpMax − 2·hp) × estado × punteria / (3·hpMax)
 ```
 
-- `tasa`: común 45, raro 25, legendario 3.
+- `ratio`: el ratio de captura real de cada especie (0–255), como en los juegos:
+  Rattata 255, los iniciales 45, los legendarios 3. Tabla `catchrate.h`, generada
+  desde PokéAPI con `tools/gen_catch.py`. La rareza solo decide cuánto aparece.
 - `estado`: dormido o congelado ×2; paralizado, quemado o envenenado ×1,5; si no ×1.
 - Los multiplicadores fraccionarios (×3/2, ×1/2) se aplican en el numerador, antes
   de la única división entera.
@@ -123,13 +125,16 @@ fallido, cada fallo tiene un 25 % de que el salvaje **huya** y termine el encuen
 **Captura lograda.**
 1. «¡Atrapaste a X!». Se registra en la Pokédex (y en la de shinies si lo es).
 2. Diálogo **«¿Criarlo ahora?»**:
-   - **Sí:** se hace el intercambio de la sección 6 con la mascota activa; la
-     mascota de antes ocupa un hueco libre del equipo o, si no hay, de la caja.
+   - **Sí:** la mascota de antes se guarda primero en un hueco libre del equipo
+     o, si no hay, de la caja (o el huevo se aparta), y después el capturado pasa
+     a criarse.
    - **No:** va al primer hueco libre del equipo; si está lleno, a la caja.
-3. Con equipo y caja llenos, en cualquiera de las dos respuestas, se abre la
-   pantalla existente para elegir a quién soltar y hacer sitio (para el
-   capturado si se respondió No, o para la mascota anterior si se respondió Sí).
-   Si se cancela, se pide confirmar antes de soltar al que no tiene sitio.
+3. Con equipo y caja llenos, **Sí** se comporta como **No** (la mascota activa
+   nunca queda solo en memoria) y el capturado va a la pantalla existente para
+   elegir a quién soltar. Rechazarla suelta al capturado, igual que tras una
+   despedida.
+4. Hasta que se contesta, el capturado solo está en memoria. Una suspensión (PWR
+   larga) lo guarda antes de dormir, salvo con equipo y caja llenos.
 
 El capturado entra como `PartyMon` con `level` = nivel del encuentro, sus IVs,
 movimientos, shiny, entrenamiento 0, vínculo 0 y edad equivalente a su nivel.
@@ -155,12 +160,20 @@ La pantalla Explorar muestra: BUSCAR (n/5 hoy), Pokéballs, monedas y la tienda.
 
 ## 6. Criar: intercambio con el equipo
 
-- En la ficha de un Pokémon del equipo o la caja, **BRING BACK** pasa a ser
-  **CRIAR** y está disponible siempre, no solo con un huevo esperando.
+- En la ficha de un Pokémon del **equipo**, **BRING BACK** pasa a ser **CRIAR**
+  y está disponible siempre, no solo con un huevo esperando. Desde la caja se usa
+  primero AL EQUIPO (su ficha ya tiene dos botones).
 - Es un **intercambio en el mismo hueco**: la mascota activa se convierte en
   `PartyMon` completo y ocupa el hueco del elegido, que pasa a ser la mascota
   activa. Nunca hace falta un hueco libre.
-- **No disponible** durante una ceremonia, una evolución o un combate.
+- **Orden ante cortes de luz:** si hay un hueco libre, la mascota actual se guarda
+  allí primero y se mueve al hueco del elegido al final (un corte duplica, nunca
+  pierde). Con todo lleno el intercambio es directo y hay una ventana documentada.
+- **No disponible** durante una ceremonia, una evolución, un combate o con una
+  oferta de movimiento pendiente.
+- **La bendición de despedida se da una vez por criatura:** volver a criar a un
+  Pokémon ya despedido y despedirlo otra vez cuenta como liberación (sin huevo
+  bendecido). Evita la granja de huevos bendecidos.
 - La mascota que entra **crece de verdad** (`frozen = false`): envejece, sube de
   nivel, evoluciona, entrena y puede despedirse. El comportamiento congelado de
   `reviveFrom` en Dylan desaparece para CRIAR.
@@ -178,39 +191,35 @@ La pantalla Explorar muestra: BUSCAR (n/5 hoy), Pokéballs, monedas y la tienda.
   bendición o maldición del último final). Solo cabe **un huevo guardado**.
 - El equipo muestra una entrada **HUEVO** mientras exista. Tocarla y elegir
   CRIAR lo vuelve a poner como mascota activa y eclosiona como siempre. La
-  mascota de ese momento va al primer hueco libre del equipo o de la caja; si
-  ambos están llenos, se aplica la misma pantalla de elegir a quién soltar que
-  en la captura (sección 4).
+  mascota de ese momento se guarda antes en el primer hueco libre del equipo o
+  de la caja. Con equipo y caja llenos la entrada HUEVO sale gris y no se puede
+  usar.
 - Si la mascota activa termina (despedida, liberación o huida) y hay un huevo
   guardado, **ese huevo pasa a ser el activo** en lugar de generar uno nuevo.
 
 ## 7. Datos y migración
 
-**`PartyMon` ampliado.** Se añaden al final de la estructura los campos de vida
-que hoy se pierden al guardar: minutos de edad exactos, vínculo y vínculo de
-hoy, peso, baya descubierta, descuidos y su enfriamiento, nivel del último
-movimiento aprendido y cualquier otro campo de la mascota que figure en
-`SAVE_FIELDS` y afecte a evolución o despedida. Quedan fuera las necesidades,
-las cacas, el sueño y la ceremonia, que se restauran al criar.
+**`PartyLife`, tabla paralela.** Los campos de vida que un `PartyMon` no guarda
+(minutos de edad exactos, vínculo, peso, baya descubierta, descuidos y su
+enfriamiento, nivel del último movimiento aprendido, rechazos de evolución y
+despedida, ticks de defensa, bendición ya usada) viajan en `Party::life[6]` y
+`Party::boxLife[18]`, con claves NVS nuevas `plife` y `blife`. `party`/`box` no
+cambian de formato, así que no hay migración: un guardado antiguo no tiene esas
+claves y sus huecos vuelven a criarse con la edad de su nivel. `PartyLife` mide
+24 bytes con relleno explícito (`static_assert`); cambiar su tamaño descarta la
+vida guardada. Quedan fuera las necesidades, las cacas, el sueño y la ceremonia,
+que se restauran al criar.
 
-**Claves NVS nuevas.** Dylan avisa de que agrandar el blob `party`/`box` puede
-desalinear lo guardado. Por eso el formato ampliado vive en claves nuevas
-`party2` y `box2`:
-1. Al arrancar, si existen `party2`/`box2`, se usan.
-2. Si no, se leen `party`/`box` con la migración por longitud de siempre, se
-   convierten (campos nuevos derivados: edad = nivel en minutos, resto a 0) y se
-   escriben `party2`/`box2`. Las claves viejas no se borran.
-3. Si la lectura falla, se arranca con equipo vacío sin tocar las claves viejas.
-
-**Huevo guardado:** clave nueva `egg2` (blob con el estado del huevo).
+**Huevo guardado:** clave nueva `egg2` (blob `StoredEgg`, leído por prefijo para
+tolerar que crezca la lista de regiones). **Bendición:** clave `bless`.
 
 **Economía y contadores:** claves nuevas en el mismo espacio NVS: monedas,
 Pokéballs, exploraciones de hoy, avisos de hoy y día del último reinicio.
 
 **Copia de seguridad:** todas las claves nuevas se añaden a `SAVE_FIELDS`; el test
-`save_test` falla si falta alguna. `MAX_VAL` (768) va justo con 18 registros de
-caja: si el `PartyMon` ampliado supera ~42 bytes, `box2` se divide en dos claves
-(`box2a`/`box2b`, 9 registros cada una) en vez de subir `MAX_VAL`.
+`save_test` falla si falta alguna. `blife` ocupa 432 bytes, por debajo de
+`MAX_VAL` (768). Los búferes de `EXPORT`/`IMPORT` por consola pasan a 4 KB
+(estáticos, no en la pila) porque un guardado completo ya supera 2 KB.
 
 ## 8. Pantallas
 
@@ -234,9 +243,12 @@ caja: si el `PartyMon` ampliado supera ~42 bytes, `box2` se divide en dos claves
   uno perdido.
 - **Suspensión (PWR larga) durante un encuentro:** el encuentro se pierde; la bola
   ya gastada no se devuelve. Monedas y bolas ya ganadas están guardadas.
-- **Especie salvaje sin sprite en la FAT:** se descarta y se vuelve a sortear (como
-  mucho 10 intentos; si no, se cancela el encuentro sin gastar exploración).
+- **Especie salvaje sin sprite:** el sorteo ya solo elige especies con arte
+  (`speciesHasArt`) y de regiones con su pack en la FAT (`regionAvailable`).
 - **Equipo y caja llenos al capturar:** ver sección 4.
+- **Escrituras en flash:** cada una congela la placa ~1 s. Las compras de la tienda
+  y el aviso espontáneo se guardan aplazados (al salir de Explorar, al atenuarse
+  la pantalla o al suspender); los gastos de bolas y premios, al momento.
 
 ## 10. Pruebas
 
@@ -247,8 +259,11 @@ caja: si el `PartyMon` ampliado supera ~42 bytes, `box2` se divide en dos claves
   desde el cuarto fallo.
 - Economía: ganancias, compra, topes de 50 bolas y 9.999 monedas, reinicio diario
   de exploraciones y avisos.
-- Datos: migración `party`/`box` → `party2`/`box2`, intercambio Pet ↔ PartyMon sin
-  pérdida de campos, huevo guardado y su vuelta, `SAVE_FIELDS` completo.
+- Datos (`raise_test.cpp`): la vida viaja con su hueco, intercambio Pet ↔ PartyMon
+  sin pérdida de campos, huevo guardado y su vuelta tras una ceremonia, bendición
+  una vez, `SAVE_FIELDS` completo.
+- Pantallas (`release_test.cpp`, `explore_test.cpp`): CRIAR en los tres estados de
+  almacenamiento, píldora HUEVO, Explorar, tienda y burbuja.
 
 **Comandos serie** para probar en la placa:
 - `WILD` fuerza un encuentro; `WILD <dex> <nivel>` uno concreto.
