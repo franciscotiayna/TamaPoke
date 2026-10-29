@@ -17,6 +17,7 @@
 #include <driver/gpio.h>
 #include <driver/rtc_io.h>
 #include "pin_config.h"
+#include "wild.h"
 #include "species.h"
 #include "dex.h"
 #include "types.h"
@@ -263,6 +264,34 @@ static const BadgeArt *badgeArtFor(uint8_t region, uint8_t i) {
 bool badgeArtExists(uint8_t region, uint8_t i) { return badgeArtFor(region, i) != nullptr; }
 
 Combatant btlYou, btlFoe;
+// ---------- encuentros salvajes (wild.cpp) ----------
+WildState gWild;             // monedas, bolas y contadores del dia
+WildMon wildMon;             // el salvaje del combate en curso
+bool btlWild = false;        // el combate actual es un encuentro salvaje
+bool exploreOpen = false;    // pantalla EXPLORAR
+uint32_t wildBubbleUntil = 0;  // aviso espontaneo "!" visible hasta
+uint8_t wildFails = 0;       // lanzamientos fallidos en este encuentro
+uint8_t throwStage = 0;      // 0 nada, 1 anillo encogiendo, 2 tambaleos
+uint32_t throwT0 = 0;
+uint8_t throwShakes = 0;     // tambaleos que aguanta (3 = capturado)
+uint8_t throwAim = AIM_MISS;
+bool caughtPending = false;  // capturado: preguntar al cerrar el combate
+bool raiseAsk = false;       // dialogo "Criarlo ahora?"
+bool eggConfirm = false;     // confirmar criar el huevo guardado
+PartyMon caughtMon;
+PartyLife caughtLife;
+// Declaradas aqui porque handleSerial() y onTap() las usan miles de lineas antes
+// de su definicion: el proto.h del emulador lo perdona, arduino-cli no.
+void startWildBattle(const WildMon &w);
+void renderExplore();
+void exploreTap(int16_t x, int16_t y);
+static void raiseCaught(bool now);   // suspend() la usa para no perder una captura
+// El dialogo "Criarlo ahora?" solo se dibuja sobre la pantalla principal (y no
+// durante una ceremonia, que tapa todo). Solo entonces es modal: si otra
+// pantalla esta encima, los toques son suyos y el dialogo espera.
+static bool raiseAskUp() {
+  return raiseAsk && !pet.ceremony && uiCurrentScreen() == SCR_MAIN;
+}
 bool btlOver = false;
 bool btlWon = false;
 bool btlNewBadge = false;
@@ -551,6 +580,10 @@ int flashIdxForDex(int16_t dex) {
 #define CX 233  // centro de la pantalla redonda
 #define CY 233
 #define PET_CY 202  // centro vertical del sprite
+// La burbuja "!" de los encuentros se dibuja en render() y se toca en onTap(),
+// ambos muy por encima de la pantalla EXPLORAR: sus coordenadas tienen que estar aqui.
+#define WILD_BUB_X (CX + 90)
+#define WILD_BUB_Y 150
 
 static const uint16_t INK_K = 0x18C4;  // spriteColor('k')
 
@@ -712,6 +745,7 @@ void setup() {
                   seen > 1767225600UL ? " (desde la ultima hora guardada)" : "");
   }
   pet.syncClock(e);
+  wildLoad(gWild, pet);
 
   audioBegin();  // ES8311 + I2S + amplificador (suena un jingle de arranque)
 
@@ -735,9 +769,54 @@ void ensureMon() {
   }
 }
 
+// Se puede empezar un encuentro ahora? Ni huevo, ni ceremonia, ni dormida.
+static bool wildCanStart() {
+  return !pet.isEgg() && pet.ceremony == CER_NONE && !pet.sleeping && !pet.evolving();
+}
+
+// Un aviso espontaneo solo sale sobre la pantalla principal, encendida y libre.
+static bool wildCanAmbient() {
+  return wildCanStart() && !screenOff && !menuOpen && !raiseAsk &&
+         uiCurrentScreen() == SCR_MAIN;
+}
+
+// Una vez por segundo: dia nuevo, monedas por el primer cuidado del dia y por
+// medallas nuevas (sondeando pet, que no sabe nada de monedas), y el sorteo del
+// aviso espontaneo una vez por minuto (1/60: ~1 por hora, maximo 3 al dia).
+static void wildTick(uint32_t now) {
+  static uint32_t last = 0, lastAmb = 0;
+  if (now - last < 1000) return;
+  last = now;
+  bool dirty = false;
+  uint32_t e = rtcEpoch();
+  if (e && e / 86400 != gWild.day) { wildNewDay(gWild, e / 86400); dirty = true; }
+  if (pet.lastCareDay && pet.lastCareDay != gWild.paidCareDay) {
+    gWild.paidCareDay = pet.lastCareDay;
+    wildEarn(gWild, wildCareCoins(pet.streak));
+    dirty = true;
+  }
+  if (pet.totalMedals != gWild.paidMedals) {      // menos = tras un WIPE: solo re-sincroniza
+    if (pet.totalMedals > gWild.paidMedals)
+      wildEarn(gWild, 30 * (pet.totalMedals - gWild.paidMedals));
+    gWild.paidMedals = pet.totalMedals;
+    dirty = true;
+  }
+  if (now - lastAmb >= 60000) {
+    lastAmb = now;
+    if (!wildBubbleUntil && gWild.ambient < WILD_AMBIENT_PER_DAY && wildCanAmbient() &&
+        random(60) == 0) {
+      wildBubbleUntil = now + 30000;
+      sfxPlay(SFX_MEDAL);
+    }
+  }
+  if (wildBubbleUntil && (now > wildBubbleUntil || !wildCanAmbient())) wildBubbleUntil = 0;
+  if (dirty) wildSave(gWild);
+}
+
 void loop() {
   uint32_t now = millis();
   pet.update(now);
+  wildTick(now);
 
   // The link is pumped here rather than from the LAN screen, because it has to
   // keep running through the battle too: linkNowPoll() drains what the radio
@@ -780,7 +859,7 @@ void loop() {
   // to the party screen to choose who it replaces, or to let it go.
   if (pet.endedKind != CER_NONE && !partyPick) {
     // party first, then the box; only a full box makes it your choice
-    if (party.add(pet.endedMon) || party.boxAdd(pet.endedMon)) {
+    if (party.add(pet.endedMon, pet.endedLife) || party.boxAdd(pet.endedMon, pet.endedLife)) {
       snprintf(partyBannerName, sizeof(partyBannerName), "%s",
                pet.endedMon.nick[0] ? pet.endedMon.nick : DEX_TBL[pet.endedMon.dex].name);
       partyBannerUntil = now + 3500;
@@ -856,6 +935,10 @@ void loop() {
 #define PWR_KEY_PRESSED HIGH
 
 void suspend() {
+  // Una captura aun sin "Criarlo ahora?" solo vive en la RAM, que el deep sleep
+  // borra: se manda al equipo o la caja antes de dormir.
+  if (caughtPending) { caughtPending = false; raiseAsk = true; }
+  if (raiseAsk) raiseCaught(false);
   pet.setClock(rtcEpoch());  // guarda la partida con la hora de ahora
 
   gfx->fillScreen(0x0000);  // aviso: luna y "z z"
@@ -1019,6 +1102,40 @@ void handleSerial() {
     Serial.println("DONE");
   } else if (line == "TIME") {
     Serial.printf("rtc=%u\n", rtcEpoch());
+    Serial.println("DONE");
+  } else if (line == "WILD" || line.startsWith("WILD ")) {   // forzar un encuentro
+    WildMon w;
+    bool ok;
+    if (line.length() > 5) {           // WILD <dex> [nivel]
+      String a = line.substring(5);
+      int sp = a.indexOf(' ');
+      w.dex = (int16_t)(sp < 0 ? a : a.substring(0, sp)).toInt();
+      long lv = sp < 0 ? pet.level() : a.substring(sp + 1).toInt();
+      w.level = (uint8_t)(lv > MAX_LEVEL ? MAX_LEVEL : lv < 1 ? 0 : lv);
+      ok = w.dex >= 1 && w.dex <= DEX_COUNT && w.level >= 1;
+      if (ok) w.tier = DEX_TBL[w.dex].rarity == R_LEGENDARIO ? R_LEGENDARIO
+                     : DEX_TBL[w.dex].rarity == R_RARO ? R_RARO : R_COMUN;
+    } else {
+      ok = wildRoll(pet, w);
+    }
+    if (ok && wildCanStart() && !battleOpen) { exploreOpen = false; menuOpen = false; startWildBattle(w); }
+    Serial.printf("wild %d lv%u tier%u shiny%d -> %s\n", w.dex, w.level, w.tier, w.shiny,
+                  battleOpen && btlWild ? "combate" : "no");
+    Serial.println("DONE");
+  } else if (line.startsWith("COINS ")) {
+    long v = line.substring(6).toInt();
+    gWild.coins = (uint16_t)(v < 0 ? 0 : v > WILD_COINS_MAX ? WILD_COINS_MAX : v);
+    wildSave(gWild);
+    Serial.println("DONE");
+  } else if (line.startsWith("BALLS ")) {
+    long v = line.substring(6).toInt();
+    gWild.balls = (uint8_t)(v < 0 ? 0 : v > WILD_BALLS_MAX ? WILD_BALLS_MAX : v);
+    wildSave(gWild);
+    Serial.println("DONE");
+  } else if (line == "WILDINFO") {
+    Serial.printf("coins=%u balls=%u explores=%u/%u ambient=%u/%u day=%u egg=%d\n",
+                  gWild.coins, gWild.balls, gWild.explores, WILD_EXPLORES_PER_DAY,
+                  gWild.ambient, WILD_AMBIENT_PER_DAY, (unsigned)gWild.day, pet.hasStoredEgg());
     Serial.println("DONE");
   } else if (line == "KEYPIN") {  // diagnostico de la tecla PWR en GPIO3 (suspension)
     int lvl = digitalRead(PWR_KEY_IO);
@@ -1279,6 +1396,7 @@ void openClock();  // prototipo
 
 void onSwipeV(int dir) {
   if (pet.awaitingStarter()) return;  // bloqueado durante la eleccion de inicial
+  if (raiseAskUp()) return;           // "Criarlo ahora?" es modal: se responde con un boton
   if (uiCurrentScreen() == SCR_DEXPICK || uiCurrentScreen() == SCR_GYMPICK)
     return;                 // on the chooser, vertical does nothing: pick a row
   if (menuOpen) { menuOpen = false; return; }   // any swipe closes the menu
@@ -1619,7 +1737,7 @@ void partyTap(int16_t x, int16_t y) {
       sfxPlay(SFX_TAP);
       return;
     }
-    party.replaceAt(i, pet.endedMon);
+    party.replaceAt(i, pet.endedMon, pet.endedLife);
     snprintf(partyBannerName, sizeof(partyBannerName), "%s",
              pet.endedMon.nick[0] ? pet.endedMon.nick : DEX_TBL[pet.endedMon.dex].name);
     partyBannerUntil = millis() + 3500;
@@ -1639,6 +1757,7 @@ void onSwipe(int dir) {
   // screen by closing it is the bug this project shipped four times.
   if (rpickSwipe(dir)) return;
   if (pet.awaitingStarter()) return;  // bloqueado durante la eleccion de inicial
+  if (raiseAskUp()) return;           // "Criarlo ahora?" es modal: se responde con un boton
   if (menuOpen) { menuOpen = false; return; }   // any swipe closes the menu
   if (battleOpen) return;   // no swiping out of a fight
   if (pickOpen) {   // horizontal pages the candidates, as everywhere else
@@ -1723,6 +1842,45 @@ void onSwipe(int dir) {
   }
 }
 
+// Guarda un bicho en el equipo o, si esta lleno, en la caja (los dos escriben
+// en la NVS al momento). Solo con todo lleno se deja en pet.endedMon para que el
+// bucle abra la pantalla de elegir a quien soltar, igual que tras una despedida.
+static void caughtBank(const PartyMon &m, const PartyLife &l) {
+  if (party.add(m, l) || party.boxAdd(m, l)) {
+    snprintf(partyBannerName, sizeof(partyBannerName), "%s",
+             m.nick[0] ? m.nick : DEX_TBL[m.dex].name);
+    partyBannerUntil = millis() + 3500;
+    sfxPlay(SFX_MEDAL);
+    return;
+  }
+  pet.endedMon = m;
+  pet.endedLife = l;
+  pet.endedKind = CER_RELEASE;   // el bucle solo mira != CER_NONE (ver loop())
+}
+
+// "Criarlo ahora?". Si: la mascota actual se guarda con toda su vida (o el
+// huevo se aparta) y la capturada pasa a criarse. No: va al equipo o la caja.
+// Orden ante un corte: primero el equipo, luego la mascota. Un corte entre
+// medias duplica, no pierde.
+static void raiseCaught(bool now) {
+  raiseAsk = false;
+  bool canNow = now && pet.ceremony == CER_NONE && !pet.evolving() &&
+                (!pet.isEgg() || !pet.hasStoredEgg());
+  if (canNow && pet.isEgg()) canNow = pet.stashEgg();   // si no se puede apartar, no se pisa
+  if (!canNow) {
+    caughtBank(caughtMon, caughtLife);
+    pet.saveNow();           // la Pokedex del capturado (registerCaught solo la marca)
+    return;
+  }
+  if (!pet.isEgg()) {        // el huevo ya quedo apartado arriba
+    PartyMon om; PartyLife ol;
+    pet.bankFull(om, ol);
+    caughtBank(om, ol);
+  }
+  pet.raiseFrom(caughtMon, caughtLife);   // guarda la mascota (y la Pokedex)
+  sfxPlay(SFX_HATCH);
+}
+
 void onTap(int16_t x, int16_t y) {
   if (pet.awaitingStarter()) {  // primera partida: region y luego inicial
     if (!starterRegionDone) {
@@ -1746,6 +1904,14 @@ void onTap(int16_t x, int16_t y) {
   }
   if (battleOpen) {
     battleTap(x, y);
+    return;
+  }
+  if (raiseAskUp()) {   // modal: nada de debajo responde
+    int c1t, c1b, c2t, c2b;
+    uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
+    if (x < CONFIRM_BTN_X || x > CONFIRM_BTN_X + CONFIRM_BTN_W) return;
+    if (y >= c1t && y <= c1b) raiseCaught(true);
+    else if (y >= c2t && y <= c2b) raiseCaught(false);
     return;
   }
   if (playerOpen) {
@@ -2472,6 +2638,13 @@ void render() {
       gfx->setCursor(CX - (int)strlen(b) * 6, 206);
       gfx->print(b);
     }
+  }
+
+  if (raiseAskUp()) {
+    char q[40];
+    snprintf(q, sizeof(q), "%s", T(S_RAISE_Q));
+    drawConfirmPanel(q, T(S_RAISE_HINT), nullptr, UI_TRACK,
+                     T(S_YES), UI_BAR_OK, UI_WHITE, T(S_NO), UI_TRACK, UI_INK);
   }
 
   if (menuOpen) drawMenu();
@@ -3423,6 +3596,7 @@ uint8_t squadCap(uint8_t idx, bool hard) {
 // A fight against another device. The squads are already exchanged; the host
 // owns resolution and the guest renders what it is sent.
 void startLinkBattle() {
+  btlWild = false;
   if (!lan.mineN || !lan.theirsN) return;
   // Rebuilt from lan.mine, NOT from squadMask. What we fight with has to be
   // exactly what the peer was told we have -- rebuilding from the party would
@@ -3460,6 +3634,7 @@ void startLinkBattle() {
 }
 
 void startTrainerBattle(uint8_t idx, bool hard) {
+  btlWild = false;
   if (idx >= TRAINER_COUNT || pet.isEgg() || pet.ceremony != CER_NONE) return;
   const Trainer &tr = TRAINERS[idx];
   uint8_t top = 0;
@@ -3494,6 +3669,7 @@ void startTrainerBattle(uint8_t idx, bool hard) {
 }
 
 void startBattle(int16_t dex, uint8_t lvl) {
+  btlWild = false;
   if (pet.isEgg() || pet.ceremony != CER_NONE) return;
   if (dex < 1 || dex > DEX_COUNT) return;
   buildSquad(0, TRAINER_TEAM_MAX, 0xFFFF);
@@ -3523,6 +3699,166 @@ void startBattle(int16_t dex, uint8_t lvl) {
   btlLungeUntil[0] = btlLungeUntil[1] = 0;
   btlHitUntil[0] = btlHitUntil[1] = 0;
   battleOpen = true;
+}
+
+// Un encuentro salvaje: el combate suelto de siempre, pero con el salvaje que
+// salio del sorteo (sus IVs y su shiny) y la opcion BALL en el menu.
+void startWildBattle(const WildMon &w) {
+  if (pet.isEgg() || pet.ceremony != CER_NONE) return;
+  btlTrainer = -1;           // startBattle no lo toca: que no herede el del ultimo gimnasio
+  btlHard = false;
+  startBattle(w.dex, w.level);
+  if (!battleOpen) return;
+  Pet foe;                   // sin begin(): nunca escribe en la NVS (ver pet.h)
+  foe.dbgHatchAs(w.dex, w.shiny);
+  foe.ivAtk = w.ivAtk; foe.ivDef = w.ivDef; foe.ivSpe = w.ivSpe; foe.ivHp = w.ivHp;
+  foe.ageMinutes = (uint32_t)(w.level ? w.level - 1 : 0) * MINUTES_PER_LEVEL;
+  foe.relearnFromLevel();
+  combatantFromPet(btlFoe, foe);
+  btlHpShown[1] = btlFoe.maxHp;
+  // Si es shiny, startBattle ya cargo el sprite normal y aqui se cambia por el
+  // shiny (una lectura de mas de la FAT); si no, la clave coincide y no recarga.
+  btlSyncSprite(1, btlFoe);
+  wildMon = w;
+  btlWild = true;
+  wildFails = 0;
+  throwStage = 0;
+  caughtPending = false;
+  btlMsgCount = 0;
+  btlSay(T(S_WILD_APPEARS), btlFoe.name);
+}
+
+// Anillo de timing: encoge de RING_R0 a RING_R1 en RING_MS sobre el salvaje;
+// se toca cuando coincide con el circulo objetivo.
+#define RING_MS 1200
+#define RING_R0 90
+#define RING_R1 10
+#define RING_TARGET 30
+// Centro del cuerpo del rival. btlSide(82, 82, 300, 40, btlFoe, 1) dibuja el
+// PMD centrado en x = 300 + 24 = 324 con los pies en y = 40 + 78 = 118, a escala
+// <= 4: un cuerpo de ~22-36 px de alto queda centrado hacia y ~64-74. (La
+// miniatura de respaldo va centrada en su celda de 80: (340, 80).)
+#define THROW_CX 324
+#define THROW_CY 72
+#define SHAKE_MS 600
+
+static int ringRadius(uint32_t t) {
+  if (t > RING_MS) t = RING_MS;
+  return RING_R0 - (int)((RING_R0 - RING_R1) * t / RING_MS);
+}
+
+static uint8_t aimFromRadius(int r) {
+  int d = r > RING_TARGET ? r - RING_TARGET : RING_TARGET - r;
+  return d <= 5 ? AIM_PERFECT : d <= 12 ? AIM_GOOD : d <= 25 ? AIM_OK : AIM_MISS;
+}
+
+static void btlThrowStart() {
+  if (!gWild.balls) { sfxPlay(SFX_DENY); btlSay("%s", T(S_NO_BALLS)); return; }
+  gWild.balls--;
+  wildSave(gWild);
+  throwStage = 1;
+  throwT0 = millis();
+  sfxPlay(SFX_TAP);
+}
+
+static void btlThrowRelease(uint8_t aim) {
+  throwAim = aim;
+  uint8_t a = wildCatchValue(wildMon.tier, btlFoe.hp, btlFoe.maxHp, btlFoe.ailment, aim);
+  throwShakes = wildShakes(a);
+  throwStage = 2;
+  throwT0 = millis();
+  sfxPlay(SFX_TAP);
+}
+
+static void wildCaught() {
+  btlMsgCount = 0;
+  btlSay(T(S_CAUGHT), btlFoe.name);
+  sfxPlay(SFX_VICTORY);
+  audioMusic(MUS_VICTORY);
+  wildToParty(wildMon, btlFoe.moves, caughtMon, caughtLife);
+  pet.registerCaught(wildMon.dex, wildMon.shiny);
+  btlOver = true;
+  btlWon = true;
+  caughtPending = true;      // al cerrar el combate: "Criarlo ahora?"
+}
+
+// Fin de los tambaleos: capturado, o se escapa de la bola, quiza huye, y si no
+// el salvaje juega su turno como en los juegos.
+static void btlThrowFinish() {
+  throwStage = 0;
+  if (throwShakes >= 3) { wildCaught(); return; }
+  wildFails++;
+  btlMsgCount = 0;
+  btlSay(T(S_BROKE_FREE), btlFoe.name);
+  if (wildFlees(wildFails)) {
+    btlSay(T(S_FLED), btlFoe.name);
+    btlOver = true;
+    btlWon = false;
+    return;
+  }
+  TurnLog lg;
+  uint16_t hp0 = btlYou.hp;
+  battleAct(btlFoe, btlYou, aiChooseMove(btlFoe, btlYou, false), lg);
+  btlNarrate(btlFoe, btlYou, lg);
+  if (btlYou.hp < hp0) btlHitUntil[0] = millis() + BTL_HIT_MS;
+  if (btlFoe.fainted()) {      // se debilito solo (confusion, retroceso): se acabo, sin premio
+    btlFaintUntil[1] = millis() + BTL_FAINT_MS;
+    btlOver = true;
+    btlWon = false;
+    return;
+  }
+  if (btlYou.fainted()) {
+    if (btlSquadAt + 1 < btlSquadN) {
+      btlFaintUntil[0] = millis() + BTL_FAINT_MS;
+      btlSwapWho = 0;          // el relevo sale al cerrar el mensaje (btlDoSwap)
+    } else {
+      btlOver = true;
+      btlWon = false;
+      btlSay("%s", T(S_BTL_LOSE));
+    }
+  }
+}
+
+// Avanza la animacion; lo llama renderBattle en cada cuadro.
+static void btlThrowTick() {
+  uint32_t t = millis() - throwT0;
+  if (throwStage == 1 && t > RING_MS + 150) btlThrowRelease(AIM_MISS);   // no toco
+  else if (throwStage == 2 && t > (uint32_t)((throwShakes < 3 ? throwShakes : 3) + 1) * SHAKE_MS)
+    btlThrowFinish();
+}
+
+static void drawThrow() {
+  uint32_t t = millis() - throwT0;
+  if (throwStage == 1) {
+    gfx->drawCircle(THROW_CX, THROW_CY, RING_TARGET, UI_BAR_OK);
+    gfx->drawCircle(THROW_CX, THROW_CY, RING_TARGET + 1, UI_BAR_OK);
+    int r = ringRadius(t);
+    gfx->drawCircle(THROW_CX, THROW_CY, r, UI_INK);
+    gfx->drawCircle(THROW_CX, THROW_CY, r + 1, UI_INK);
+  } else if (throwStage == 2) {
+    // la bola se tambalea: un vaiven por cada tambaleo que aguanta
+    uint32_t k = t / SHAKE_MS;
+    int dx = (k < throwShakes && (t % SHAKE_MS) < SHAKE_MS / 2) ? ((k & 1) ? 6 : -6) : 0;
+    int bx = THROW_CX + dx, by = THROW_CY + 20;
+    gfx->fillCircle(bx, by, 16, UI_WHITE);
+    for (int dy = 1; dy <= 16; dy++) {     // mitad roja de arriba, recortada al circulo
+      int w = 0;
+      while ((w + 1) * (w + 1) + dy * dy <= 256) w++;
+      gfx->drawFastHLine(bx - w, by - dy, 2 * w + 1, UI_BAR_BAD);
+    }
+    gfx->drawCircle(bx, by, 16, UI_INK);
+    gfx->drawFastHLine(bx - 16, by, 33, UI_INK);
+    gfx->fillCircle(bx, by, 4, UI_WHITE);
+    gfx->drawCircle(bx, by, 4, UI_INK);
+  }
+  if (throwStage == 1 || (throwStage == 2 && t < 500)) {
+    const char *lbl = throwStage == 2 && throwAim == AIM_PERFECT ? T(S_AIM_PERFECT)
+                    : throwStage == 2 && throwAim == AIM_GOOD ? T(S_AIM_GOOD) : T(S_BALL);
+    gfx->setTextColor(UI_INK);
+    gfx->setTextSize(2);
+    gfx->setCursor(CX - (int)strlen(lbl) * 6, BTL_GRID_Y + 30);
+    gfx->print(lbl);
+  }
 }
 
 // The guest's whole turn: copy in what the host resolved and play the same
@@ -3726,6 +4062,13 @@ static void btlResolve(uint8_t yourMove) {
       uint8_t amt = (btlHard ? 6 + random(5) : 3 + random(3)) + btlTrainer / 3;
       btlTrainGain = pet.rewardTraining(amt, btlTrainWhich);
     }
+    // monedas: medalla nueva 50, repetir un gimnasio 15, debilitar un salvaje 5
+    if (btlWon && btlTrainer >= 0) { wildEarn(gWild, btlNewBadge ? 50 : 15); wildSave(gWild); }
+    if (btlWon && btlWild) {
+      wildEarn(gWild, 5);
+      wildSave(gWild);
+      if (btlPetIn) btlTrainGain = pet.rewardTraining(1, btlTrainWhich);
+    }
     audioMusic(btlWon ? MUS_VICTORY : MUS_NONE);
     if (btlWon) sfxPlay(SFX_VICTORY);
     // Tell the peer before anything else: if we stop here without sending, the
@@ -3733,7 +4076,8 @@ static void btlResolve(uint8_t yourMove) {
     if (btlLink && btlLinkHost) lan.sendEnd(btlWon);
     if (btlLink) { btlSay("%s", btlWon ? T(S_BTL_WIN) : T(S_BTL_LOSE)); return; }
     if (btlWon && btlTrainer >= 0) { btlWinUntil = millis() + 60000; return; }
-    btlSay("%s", T(S_BTL_LOSE));
+    btlSay("%s", btlWon ? T(S_BTL_WIN) : T(S_BTL_LOSE));
+    if (btlWon && btlWild) btlSay(T(S_WILD_COINS_FMT), 5u);
   }
 }
 
@@ -3776,6 +4120,7 @@ static void btlSide(int tx, int ty, int sx, int sy, const Combatant &c, uint8_t 
     gfx->setCursor(tx + 18, ty + 28);
     gfx->print(T(AIL_STR[c.ailment]));
   }
+  if (who == 1 && throwStage == 2) return;   // el salvaje esta dentro de la bola
   // a platform under each creature, so they stand in the scene rather than
   // floating over it
   uint32_t now = millis();
@@ -3924,6 +4269,7 @@ void renderWin() {
 void renderBattle() {
   if (btlWinUntil) { renderWin(); return; }
   btlEaseBars();
+  if (throwStage) btlThrowTick();
   gfx->fillScreen(RGB565_BLACK);
   drawBattleBack();
   // the lower band stays flat so the move grid and the HP text keep their
@@ -3941,7 +4287,9 @@ void renderBattle() {
   bool lanWait = btlLink && !btlOver &&
                  (btlLinkHost ? (btlMyAct && !lan.hasPeerAct())
                               : (lan.state == LINK_WAITING));
-  if (lanWait && !btlMsgCount) {
+  if (throwStage) {
+    drawThrow();               // el lanzamiento ocupa la zona del menu
+  } else if (lanWait && !btlMsgCount) {
     gfx->fillRoundRect(BTL_GRID_X, BTL_GRID_Y, 328, BTL_CELL_H * 2 + 8, 12, UI_WHITE);
     gfx->drawRoundRect(BTL_GRID_X, BTL_GRID_Y, 328, BTL_CELL_H * 2 + 8, 12, UI_INK);
     gfx->setTextColor(UI_TRACK);
@@ -3966,12 +4314,29 @@ void renderBattle() {
     // rows do not fit: the panel is round, and at that depth the chord is only
     // ~250 px. The lower two reuse the move grid's cells, so they inherit its
     // padded hit areas -- which is what made POKEMON hard to press before.
-    gfx->fillRoundRect(BTL_GRID_X, BTL_GRID_Y, 328, BTL_CELL_H, 10, UI_BG_DAY);
-    gfx->drawRoundRect(BTL_GRID_X, BTL_GRID_Y, 328, BTL_CELL_H, 10, UI_INK);
-    gfx->setTextColor(UI_INK);
-    gfx->setTextSize(2);
-    gfx->setCursor(CX - (int)strlen(T(S_FIGHT)) * 6, BTL_GRID_Y + 14);
-    gfx->print(T(S_FIGHT));
+    if (btlWild) {
+      // salvaje: LUCHA y BALL comparten la fila de arriba
+      char bl[16];
+      snprintf(bl, sizeof(bl), "%s x%u", T(S_BALL), gWild.balls);
+      const char *top[2] = { T(S_FIGHT), bl };
+      for (int i = 0; i < 2; i++) {
+        int x = BTL_CELL_X(i), y = BTL_CELL_Y(i);
+        bool dead = (i == 1 && !gWild.balls);
+        gfx->fillRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, dead ? UI_TRACK : UI_BG_DAY);
+        gfx->drawRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, UI_INK);
+        gfx->setTextColor(dead ? 0x8410 : UI_INK);
+        gfx->setTextSize(2);
+        gfx->setCursor(x + (BTL_CELL_W - (int)strlen(top[i]) * 12) / 2, y + 14);
+        gfx->print(top[i]);
+      }
+    } else {
+      gfx->fillRoundRect(BTL_GRID_X, BTL_GRID_Y, 328, BTL_CELL_H, 10, UI_BG_DAY);
+      gfx->drawRoundRect(BTL_GRID_X, BTL_GRID_Y, 328, BTL_CELL_H, 10, UI_INK);
+      gfx->setTextColor(UI_INK);
+      gfx->setTextSize(2);
+      gfx->setCursor(CX - (int)strlen(T(S_FIGHT)) * 6, BTL_GRID_Y + 14);
+      gfx->print(T(S_FIGHT));
+    }
     const char *low[2] = { T(S_BTL_SWITCH), T(S_BTL_RUN) };
     for (int i = 0; i < 2; i++) {
       int x = BTL_CELL_X(i + 2), y = BTL_CELL_Y(i + 2);
@@ -4116,10 +4481,14 @@ static void btlRun() {
   audioMusic(MUS_NONE);
   if (btlLink) { lanLeave(); btlLink = false; lanOpen = true; }
   battleOpen = false;
+  btlWild = false;
+  throwStage = 0;
   btlMenu = 0;
 }
 
 void battleTap(int16_t x, int16_t y) {
+  if (throwStage == 1) { btlThrowRelease(aimFromRadius(ringRadius(millis() - throwT0))); return; }
+  if (throwStage == 2) return;   // los tambaleos no se interrumpen
   if (btlWinUntil) {          // dismiss the win screen and leave the fight
     btlWinUntil = 0;
     btlFreeSprites();
@@ -4136,14 +4505,19 @@ void battleTap(int16_t x, int16_t y) {
       // Back to the LAN screen rather than all the way out: that is where a
       // rematch is offered, and re-pairing for every fight would be tedious.
       if (btlLink) { btlLink = false; lanOpen = true; }
+      if (caughtPending) { caughtPending = false; raiseAsk = true; }
+      btlWild = false;
       return;
     }
     if (btlSwapWho >= 0) btlDoSwap();   // the replacement arrives on this beat
     return;
   }
   if (btlMenu == 0) {
-    if (x >= BTL_GRID_X - BTL_HIT_PAD && x <= BTL_GRID_X + 328 + BTL_HIT_PAD &&
-        y >= BTL_HIT_Y0(0) && y <= BTL_HIT_Y1(0)) {
+    if (btlWild) {
+      if (btlCellHit(0, x, y)) { sfxPlay(SFX_TAP); btlMenu = 1; return; }   // LUCHA
+      if (btlCellHit(1, x, y)) { btlThrowStart(); return; }                  // BALL
+    } else if (x >= BTL_GRID_X - BTL_HIT_PAD && x <= BTL_GRID_X + 328 + BTL_HIT_PAD &&
+               y >= BTL_HIT_Y0(0) && y <= BTL_HIT_Y1(0)) {
       sfxPlay(SFX_TAP);
       btlMenu = 1;                       // FIGHT
       return;
