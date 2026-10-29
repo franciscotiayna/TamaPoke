@@ -584,8 +584,14 @@ int flashIdxForDex(int16_t dex) {
 #define PET_CY 202  // centro vertical del sprite
 // La burbuja "!" de los encuentros se dibuja en render() y se toca en onTap(),
 // ambos muy por encima de la pantalla EXPLORAR: sus coordenadas tienen que estar aqui.
+// A la derecha de la cabeza del bicho: el circulo (r 26) ocupa y 106..158, entre
+// la franja del nombre (y 28..94, abre el menu) y los botones de evolucion /
+// despedida (desde y 172); el radio tactil (WILD_BUB_HIT) solo roza esas dos
+// zonas en una esquirla, y ahi onTap() da preferencia a los botones.
 #define WILD_BUB_X (CX + 90)
-#define WILD_BUB_Y 150
+#define WILD_BUB_Y 132
+#define WILD_BUB_R 26
+#define WILD_BUB_HIT 44
 
 static const uint16_t INK_K = 0x18C4;  // spriteColor('k')
 
@@ -793,12 +799,12 @@ static void wildTick(uint32_t now) {
   bool dirty = false;
   uint32_t e = rtcEpoch();
   if (e && e / 86400 != gWild.day) { wildNewDay(gWild, e / 86400); dirty = true; }
+  // paidCareDay es un maximo: nunca baja. Si el reloj va atras y luego adelante,
+  // el mismo dia no se paga dos veces. (Un WIPE borra tambien "wini" y wildLoad
+  // vuelve a partir de pet.lastCareDay, asi que no hace falta bajarlo aqui.)
   if (pet.lastCareDay > gWild.paidCareDay) {
     gWild.paidCareDay = pet.lastCareDay;
     wildEarn(gWild, wildCareCoins(pet.streak));
-    dirty = true;
-  } else if (pet.lastCareDay < gWild.paidCareDay) {   // WIPE o reloj atras: sin pagar
-    gWild.paidCareDay = pet.lastCareDay;
     dirty = true;
   }
   if (pet.totalMedals != gWild.paidMedals) {      // menos = tras un WIPE: solo re-sincroniza
@@ -812,6 +818,8 @@ static void wildTick(uint32_t now) {
     if (!wildBubbleUntil && gWild.ambient < WILD_AMBIENT_PER_DAY && wildCanAmbient() &&
         random(60) == 0) {
       wildBubbleUntil = now + 30000;
+      gWild.ambient++;         // el tope diario cuenta los avisos mostrados, no los tocados
+      dirty = true;
       sfxPlay(SFX_MEDAL);
     }
   }
@@ -2214,6 +2222,19 @@ void onTap(int16_t x, int16_t y) {
     if (pet.canRunawayNow()) { pet.startRunaway(); return; }
     if (pet.wantFarewellButton()) { choiceKind = 2; choiceUntil = millis() + 12000; return; }
   }
+  // el aviso "!" va despues de los botones de evolucion/despedida (su radio tactil
+  // solo roza el borde de estos y ahi ganan ellos) y antes de la franja del
+  // nombre y de la caricia, que si quedan debajo
+  if (wildBubbleUntil) {
+    int dx = x - WILD_BUB_X, dy = y - WILD_BUB_Y;
+    if (dx * dx + dy * dy <= WILD_BUB_HIT * WILD_BUB_HIT) {
+      wildBubbleUntil = 0;     // ya se conto al aparecer (wildTick)
+      WildMon w;
+      if (!wildCanStart() || !wildRoll(pet, w)) { sfxPlay(SFX_DENY); return; }
+      startWildBattle(w);
+      return;
+    }
+  }
   for (int i = 0; i < BTN_COUNT; i++) {
     int dx = x - buttons[i].cx, dy = y - buttons[i].cy;
     if (dx * dx + dy * dy <= BTN_HIT * BTN_HIT) {
@@ -2608,6 +2629,18 @@ void render() {
     gfx->setTextSize(3);
     gfx->setCursor(320, 130);
     gfx->print("Zz");
+  }
+
+  // aviso espontaneo de encuentro: tocarlo abre el combate. Se dibuja ANTES de
+  // los dialogos (comida, soltar, decision, aviso del equipo) para que estos lo
+  // tapen: mientras estan arriba son ellos los que reciben el toque.
+  if (wildBubbleUntil && uiCurrentScreen() == SCR_MAIN && !menuOpen) {
+    gfx->fillCircle(WILD_BUB_X, WILD_BUB_Y, WILD_BUB_R, UI_BAR_WARN);
+    gfx->drawCircle(WILD_BUB_X, WILD_BUB_Y, WILD_BUB_R, UI_INK);
+    gfx->setTextColor(UI_INK);
+    gfx->setTextSize(3);
+    gfx->setCursor(WILD_BUB_X - 8, WILD_BUB_Y - 11);
+    gfx->print("!");
   }
 
   // selector de comida
@@ -3830,6 +3863,7 @@ static void btlThrowFinish() {
   battleAct(btlFoe, btlYou, aiChooseMove(btlFoe, btlYou, false), lg);
   btlNarrate(btlFoe, btlYou, lg);
   if (lg.damage && !lg.hurtSelf) btlLungeUntil[1] = now + BTL_LUNGE_MS;
+  bool foeSelfKO = btlFoe.fainted();   // en su propio movimiento: retroceso o confusion
   if (!btlYou.fainted() && !btlFoe.fainted()) {   // quemadura/veneno, como en btlResolve
     battleEndTurn(btlYou, lg);
     if (lg.damage) btlNarrate(btlYou, btlYou, lg);
@@ -3837,11 +3871,26 @@ static void btlThrowFinish() {
     if (lg.damage) btlNarrate(btlFoe, btlFoe, lg);
   }
   if (btlYou.hp < hp0) btlHitUntil[0] = now + BTL_HIT_MS;
-  if (btlFoe.fainted()) {      // se debilito solo (confusion, retroceso, veneno): sin premio
+  if (btlFoe.fainted()) {
     btlFaintUntil[1] = now + BTL_FAINT_MS;
     btlOver = true;
-    btlWon = false;
-    audioMusic(MUS_NONE);
+    if (foeSelfKO) {           // se debilito solo con su movimiento: sin premio
+      btlWon = false;
+      audioMusic(MUS_NONE);
+      return;
+    }
+    // Cayo por la quemadura o el veneno del final del turno: eso lo puso tu
+    // mascota, asi que cuenta como victoria, igual que en btlResolve.
+    btlWon = true;
+    btlTrainGain = 0;
+    wildEarn(gWild, 5);
+    wildSave(gWild);
+    if (btlPetIn) btlTrainGain = pet.rewardTraining(1, btlTrainWhich);
+    audioMusic(MUS_VICTORY);
+    sfxPlay(SFX_VICTORY);
+    char c[20];
+    snprintf(c, sizeof(c), T(S_WILD_COINS_FMT), 5u);
+    btlSay("%s %s", T(S_BTL_WIN), c);
     return;
   }
   if (btlYou.fainted()) {
