@@ -1,4 +1,5 @@
 #include "wild.h"
+#include <Preferences.h>
 #include "moves.h"
 #include "noart.h"   // speciesHasArt(): como pet.cpp
 
@@ -120,4 +121,42 @@ bool wildRoll(Pet &p, WildMon &m) {
   m.ivSpe = 8 + random(24);
   m.ivHp = 8 + random(24);
   return true;
+}
+
+void wildLoad(WildState &w, const Pet &p) {
+  Preferences pr;
+  pr.begin("tamapoke", true);
+  bool init = pr.getBool("wini", false);
+  w = WildState();
+  if (init) {
+    w.coins = pr.getUShort("wcoin", WILD_START_COINS);
+    w.balls = pr.getUChar("wball", WILD_START_BALLS);
+    w.explores = pr.getUChar("wexp", 0);
+    w.ambient = pr.getUChar("wamb", 0);
+    w.day = pr.getUInt("wday", 0);
+    w.paidCareDay = pr.getUInt("wcare", 0);
+    w.paidMedals = pr.getUShort("wmed", 0);
+  }
+  pr.end();
+  if (w.coins > WILD_COINS_MAX) w.coins = WILD_COINS_MAX;
+  if (w.balls > WILD_BALLS_MAX) w.balls = WILD_BALLS_MAX;
+  if (!init) {
+    w.paidCareDay = p.lastCareDay;
+    w.paidMedals = p.totalMedals;
+    wildSave(w);
+  }
+}
+
+void wildSave(const WildState &w) {
+  Preferences pr;
+  pr.begin("tamapoke", false);
+  pr.putBool("wini", true);
+  pr.putUShort("wcoin", w.coins);
+  pr.putUChar("wball", w.balls);
+  pr.putUChar("wexp", w.explores);
+  pr.putUChar("wamb", w.ambient);
+  pr.putUInt("wday", w.day);
+  pr.putUInt("wcare", w.paidCareDay);
+  pr.putUShort("wmed", w.paidMedals);
+  pr.end();
 }

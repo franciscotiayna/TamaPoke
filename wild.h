@@ -64,3 +64,9 @@ bool wildFlees(uint8_t failedThrows);
 // +-3, a veces ya evolucionado, shiny 1/48 mejorado por el cuidado.
 // false si la mascota es un huevo o no hay nada que sacar.
 bool wildRoll(Pet &p, WildMon &out);
+
+// NVS, en el espacio "tamapoke" de siempre (WIPE lo borra con todo lo demas).
+// Sin guardado previo arranca con los valores iniciales y marca como ya
+// pagados el cuidado de hoy y las medallas que ya tiene el jugador.
+void wildLoad(WildState &w, const Pet &p);
+void wildSave(const WildState &w);

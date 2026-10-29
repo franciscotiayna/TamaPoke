@@ -112,7 +112,30 @@ static void testRoll() {
   ck(legLv, "el legendario sale a nivel 40 o mas");
 }
 
+static void testPersist() {
+  Pet p;
+  p.begin();
+  WildState first;
+  first.coins = 1;                      // basura: wildLoad debe pisarla
+  wildLoad(first, p);
+  ck(first.coins == WILD_START_COINS && first.balls == WILD_START_BALLS,
+     "primer arranque: valores iniciales");
+  ck(first.paidMedals == p.totalMedals && first.paidCareDay == p.lastCareDay,
+     "primer arranque: no paga medallas ni cuidados anteriores");
+
+  WildState s;
+  s.coins = 123; s.balls = 7; s.explores = 2; s.ambient = 1;
+  s.day = 999; s.paidCareDay = 998; s.paidMedals = 4;
+  wildSave(s);
+  WildState r;
+  wildLoad(r, p);
+  ck(r.coins == 123 && r.balls == 7 && r.explores == 2 && r.ambient == 1 &&
+     r.day == 999 && r.paidCareDay == 998 && r.paidMedals == 4,
+     "monedas y contadores sobreviven a un reinicio");
+}
+
 int main() {
+  testPersist();
   testEconomy();
   testCatch();
   testRoll();

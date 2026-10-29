@@ -32,6 +32,10 @@ const SaveField SAVE_FIELDS[] = {
   { "ghi", SK_U16 },    { "shi", SK_U16 },    { "qhi", SK_U16 },
   // the banked creatures
   { "party", SK_BYTES }, { "box", SK_BYTES },
+  // encuentros salvajes: monedas, bolas y contadores del dia (wild.cpp)
+  { "wini", SK_BOOL },  { "wcoin", SK_U16 },  { "wball", SK_U8 },
+  { "wexp", SK_U8 },    { "wamb", SK_U8 },    { "wday", SK_U32 },
+  { "wcare", SK_U32 },  { "wmed", SK_U16 },
   // settings, so a restored device plays the way it did
   { "lang", SK_U8 },    { "snd", SK_BOOL },   { "vol", SK_U8 },
 };
