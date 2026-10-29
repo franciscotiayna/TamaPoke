@@ -97,20 +97,35 @@ static void testRoll() {
   p.ageMinutes = 19UL * MINUTES_PER_LEVEL;       // nivel 20
   p.region = 0;                                  // Kanto
   const RegionInfo &rg = REGIONS[0];
-  bool rolled = true, lvOk = true, regOk = true, artOk = true, noLegend = true, evolved = false;
+  bool rolled = true, lvOk = true, notReady = true, inRange = true, regOk = true, artOk = true,
+       noLegend = true, evolved = false, lowBase = false;
   for (int i = 0; i < 500; i++) {
     WildMon m;
     if (!wildRoll(p, m)) { rolled = false; break; }
-    if (m.level < 17 || m.level > 23) lvOk = false;
-    // vale porque el nivel 17-23 esta por debajo de toda evolucion de Kanto
-    // que cruza de region (la mas baja es la 25)
+    const DexEntry &d = DEX_TBL[m.dex];
+    bool evolves = d.evolvesTo && d.evolveLevel;
+    int lo = wildPreEvoLevel(m.dex);
+    // nunca muy por encima de la mascota (20 + 5), salvo el minimo de su especie
+    if (m.level < 2 || m.level > (lo > 25 ? lo : 25)) lvOk = false;
+    // nunca sale listo para evolucionar: siempre por debajo de su nivel de evolucion
+    if (evolves && m.level >= d.evolveLevel) notReady = false;
+    // y nunca por debajo del nivel al que se llega a esa forma
+    if (lo > 2 && m.level < lo) inRange = false;
+    if (lo == 2 && evolves && m.level < 10) lowBase = true;
+    // vale porque solo sale evolucionado si la mascota (20) ya llego a ese
+    // nivel, y toda evolucion de Kanto que cruza de region es a partir de 25
     if (m.dex < rg.lo || m.dex > rg.hi) regOk = false;
     if (!speciesHasArt(m.dex)) artOk = false;
     if (m.tier == R_LEGENDARIO) noLegend = false;
     if (DEX_TBL[m.dex].rarity == R_EVO) evolved = true;
   }
   ck(rolled, "siempre sale un salvaje");
-  ck(lvOk, "nivel = el de la mascota +-3");
+  ck(lvOk, "nivel entre 2 y el de la mascota + 5");
+  ck(notReady, "ninguno sale listo para evolucionar");
+  ck(inRange, "una forma evolucionada nunca sale por debajo de su nivel de evolucion");
+  ck(lowBase, "las formas base salen bajas aunque la mascota sea alta");
+  ck(wildPreEvoLevel(4) == 2 && wildPreEvoLevel(5) == 16 && wildPreEvoLevel(6) == 36,
+     "Charmander desde 2, Charmeleon desde 16, Charizard desde 36");
   ck(regOk, "solo de la region elegida");
   ck(artOk, "nunca una especie sin arte");
   ck(noLegend, "sin legendarios con menos de 25 registrados");

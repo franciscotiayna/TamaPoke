@@ -68,10 +68,16 @@ placa pierde la hora el reinicio diario puede retrasarse; no rompe nada.
    raro, con los mismos bonus por racha y vínculo y la misma preferencia por
    líneas evolutivas incompletas.
 3. **Región:** la elegida para los huevos (`region`); `REGION_ALL` sortea en todas.
-4. **Nivel:** el de la mascota ±3, mínimo 3, máximo 100.
-5. **Formas evolucionadas:** si el nivel supera el de evolución de la especie
-   sorteada, 30 % de que aparezca ya evolucionado (un paso; se repite mientras
-   el nivel lo permita y vuelva a salir el 30 %).
+4. **Nivel por especie** (como en los juegos): desde el nivel al que evoluciona su
+   forma anterior (2 si es forma base) hasta su propio nivel de evolución − 1, o
+   el mínimo + 15 si ya no evoluciona. Las especies que ni evolucionan ni vienen de
+   otra, 5–35. Techo: el nivel de la mascota + 5 (salvo el mínimo de la especie).
+   Así un Pokémon recién capturado **nunca está listo para evolucionar**: Caterpie
+   2–6, Charmander 2–15, Charmeleon 16–35, Charizard 36–51. (Antes era el nivel
+   de la mascota ±3, y casi todo salía listo para evolucionar.)
+5. **Formas evolucionadas:** solo si la **mascota** ya alcanzó ese nivel de
+   evolución, 30 % de que aparezca ya evolucionado (un paso; se repite mientras
+   la mascota lo permita y vuelva a salir el 30 %).
 6. **Shiny:** 1/48, con las mismas mejoras por racha y vínculo que los huevos.
 7. **IVs:** al azar, como al eclosionar. **Movimientos:** los de su nivel
    (`relearnFromLevel`, como ya hace `startBattle`).

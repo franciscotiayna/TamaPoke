@@ -81,6 +81,15 @@ static uint8_t wildRegion(uint8_t want) {
   return want;
 }
 
+// Nivel al que evoluciona la forma anterior de `dex` (el minimo con el que tiene
+// sentido verlo), o 2 si es una forma base. Las ramas de Eevee no estan en
+// evolvesTo: salen solo por el paso de evolucion de wildRoll, que fija su minimo.
+int wildPreEvoLevel(int16_t dex) {
+  for (int16_t d = 1; d <= DEX_COUNT; d++)
+    if (DEX_TBL[d].evolvesTo == dex && DEX_TBL[d].evolveLevel) return DEX_TBL[d].evolveLevel;
+  return 2;
+}
+
 bool wildRoll(Pet &p, WildMon &m) {
   if (p.isEgg()) return false;
   const RegionInfo &rg = REGIONS[wildRegion(p.region % REGION_COUNT)];
@@ -109,26 +118,45 @@ bool wildRoll(Pet &p, WildMon &m) {
   }
   if (!dex) return false;
 
-  int lvl = p.level();
-  if (tier == R_LEGENDARIO) { lvl += 10; if (lvl < 40) lvl = 40; }
-  else lvl += (int)random(7) - 3;
-  if (lvl < 3) lvl = 3;
-  if (lvl > MAX_LEVEL) lvl = MAX_LEVEL;
-
-  // con nivel de sobra puede salir ya evolucionado, un paso cada vez
-  for (;;) {
-    int16_t next = DEX_TBL[dex].evolvesTo;
-    if (dex == DEX_EEVEE) {                      // la tabla solo guarda 134
-      int16_t o[EEVEE_EVO_COUNT];
-      uint8_t n = p.eeveeOptions(o);
-      if (n) next = o[random(n)];
+  const int pet = p.level();
+  int lvl;
+  if (tier == R_LEGENDARIO) {
+    lvl = pet + 10;
+    if (lvl < 40) lvl = 40;
+  } else {
+    // Nivel por especie, como en los juegos: una forma base nunca sale a su nivel
+    // de evolucion (atraparla y evolucionarla al momento no tenia gracia).
+    // Rango: desde el nivel al que evoluciona su forma anterior (2 si no tiene)
+    // hasta su propio nivel de evolucion - 1 (o +15 si ya no evoluciona).
+    int lo = wildPreEvoLevel(dex);
+    // Puede salir ya evolucionado, un paso cada vez, solo si tu mascota ya llego
+    // a ese nivel de evolucion.
+    for (;;) {
+      int16_t next = DEX_TBL[dex].evolvesTo;
+      if (dex == DEX_EEVEE) {                      // la tabla solo guarda 134
+        int16_t o[EEVEE_EVO_COUNT];
+        uint8_t n = p.eeveeOptions(o);
+        if (n) next = o[random(n)];
+      }
+      if (!next || next > DEX_COUNT || !DEX_TBL[dex].evolveLevel ||
+          pet < DEX_TBL[dex].evolveLevel || !speciesHasArt(next) ||
+          !regionAvailable(regionOfDex(next)) || random(100) >= WILD_EVOLVED_PCT)
+        break;
+      lo = DEX_TBL[dex].evolveLevel;
+      dex = next;
     }
-    if (!next || next > DEX_COUNT || !DEX_TBL[dex].evolveLevel ||
-        lvl < DEX_TBL[dex].evolveLevel || !speciesHasArt(next) ||
-        !regionAvailable(regionOfDex(next)) || random(100) >= WILD_EVOLVED_PCT)
-      break;
-    dex = next;
+    const DexEntry &d = DEX_TBL[dex];
+    bool evolves = d.evolvesTo && d.evolveLevel;
+    int hi = evolves ? d.evolveLevel - 1 : lo + 15;
+    if (lo <= 2 && !evolves) { lo = 5; hi = 35; }  // ni evoluciona ni viene de otra
+    if (lo < 2) lo = 2;
+    int cap = pet + 5;                             // nada muy por encima de ti...
+    if (cap < lo) cap = lo;                        // ...salvo su propio minimo
+    if (hi > cap) hi = cap;
+    if (hi < lo) hi = lo;
+    lvl = lo + (int)random(hi - lo + 1);
   }
+  if (lvl > MAX_LEVEL) lvl = MAX_LEVEL;
 
   int shinyBase = 48 - p.careBonus();
   if (shinyBase < 8) shinyBase = 8;

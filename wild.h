@@ -64,10 +64,14 @@ bool wildFlees(uint8_t failedThrows);
 
 // Sortea el salvaje: legendario 1% con 25+ registrados (nivel +10, minimo 40);
 // si no, rareza como los huevos (comun / raro con el bonus de cuidado) y
-// prefiriendo lineas incompletas. Region de los huevos, nivel de la mascota
-// +-3, a veces ya evolucionado, shiny 1/48 mejorado por el cuidado.
+// prefiriendo lineas incompletas. Region de los huevos. Nivel por especie: desde
+// el nivel de evolucion de su forma anterior hasta el suyo - 1 (nunca sale listo
+// para evolucionar), con techo en el nivel de la mascota + 5. Sale evolucionado
+// (30%) solo si la mascota ya llego a ese nivel. Shiny 1/48 mejorado por el cuidado.
 // false si la mascota es un huevo o no hay nada que sacar.
 bool wildRoll(Pet &p, WildMon &out);
+// Nivel al que evoluciona la forma anterior de una especie (2 si es forma base).
+int wildPreEvoLevel(int16_t dex);
 
 // El capturado como miembro del equipo: entrenamiento a 0, edad = su nivel.
 void wildToParty(const WildMon &w, const uint8_t moves[MOVE_SLOTS], PartyMon &m, PartyLife &l);
