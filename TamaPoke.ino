@@ -173,6 +173,7 @@ uint32_t gameOverUntil = 0;
 #define GAME_MS 20000UL
 uint32_t gameUntil = 0;
 float ballX, ballY, ballVX, ballVY, gamePetX;
+float ballDownX, ballDownY;   // donde estaba la bola al APOYAR el dedo (ver gameTap)
 uint8_t gameScore, gameMisses;
 float hitX, hitY;             // ultimo golpe (anillo de impacto)
 uint32_t hitTime = 0;
@@ -1396,6 +1397,8 @@ void handleTouch() {
   if (pressed && !wasPressed) {  // empieza el gesto
     tX0 = tXl = x;
     tY0 = tYl = y;
+    ballDownX = ballX;           // el toque llega al levantar: el golpe se mide
+    ballDownY = ballY;           // contra la bola de este instante, no la de entonces
     tStart = millis();
     holdFired = false;
     swallowGesture = (dimStage > 0) || screenOff;  // si estaba a oscuras, solo despierta
@@ -2882,16 +2885,14 @@ void leaveSpeed() {
 
 void gameTap(int16_t x, int16_t y) {
   if (gameOverUntil) return;
-  // The ball is checked BEFORE the quit strip. The ball bounces inside a circle
-  // of radius 205 about the centre, so it reaches y=28 -- well inside the y<72
-  // header. Reaching up to hit a high ball used to abandon the game instead,
-  // silently forfeiting the score, the speed training and the record.
-  float dx = ballX - x, dy = ballY - y;
+  // Sin franja de salida: tocar la cabecera (y<72) sin acertar sacaba del juego.
+  // La bola sube hasta y=28, y como el toque se resuelve al LEVANTAR el dedo,
+  // una bola alta y rapida ya se habia movido: el golpe contaba como fallo y te
+  // echaba sin aviso. Se sale deslizando (onSwipe/onSwipeV), y la partida acaba
+  // sola por tiempo o tras tres fallos. El golpe se mide contra la bola de
+  // cuando se apoyo el dedo (ballDownX/Y, guardada en handleTouch).
+  float dx = ballDownX - x, dy = ballDownY - y;
   bool onBall = (dx * dx + dy * dy < 74 * 74);
-  if (!onBall && y < 72) {  // tocar la cabecera = salir, conservando lo ganado
-    leaveGame();
-    return;
-  }
   if (onBall) {  // toque a la bola!
     gameScore++;
     sfxPlay(SFX_PLAY);
