@@ -53,6 +53,9 @@ void Party::begin() {
     if (s.dex < 1 || s.dex > DEX_COUNT) s.dex = 0;
     s.nick[sizeof(s.nick) - 1] = 0;
   }
+  for (auto &l : life) l = PartyLife();
+  if (prefs.getBytesLength("plife") == sizeof(life)) prefs.getBytes("plife", life, sizeof(life));
+  for (int i = 0; i < PARTY_SLOTS; i++) if (slots[i].empty()) life[i] = PartyLife();
   // The box is a separate key and simply absent on an older save, which leaves
   // it zeroed -- exactly what an empty box is.
   for (auto &s : box) s = PartyMon();
@@ -74,14 +77,19 @@ void Party::begin() {
     if (s.dex < 1 || s.dex > DEX_COUNT) s.dex = 0;
     s.nick[sizeof(s.nick) - 1] = 0;
   }
+  for (auto &l : boxLife) l = PartyLife();
+  if (prefs.getBytesLength("blife") == sizeof(boxLife)) prefs.getBytes("blife", boxLife, sizeof(boxLife));
+  for (int i = 0; i < BOX_SLOTS; i++) if (box[i].empty()) boxLife[i] = PartyLife();
 }
 
 void Party::save() {
   prefs.putBytes("party", slots, sizeof(slots));
+  prefs.putBytes("plife", life, sizeof(life));
 }
 
 void Party::boxSave() {
   prefs.putBytes("box", box, sizeof(box));
+  prefs.putBytes("blife", boxLife, sizeof(boxLife));
 }
 
 uint8_t Party::boxCount() const {
@@ -97,10 +105,11 @@ int Party::boxFirstFree() const {
   return -1;
 }
 
-bool Party::boxAdd(const PartyMon &m) {
+bool Party::boxAdd(const PartyMon &m, const PartyLife &l) {
   int i = boxFirstFree();
   if (i < 0) return false;
   box[i] = m;
+  boxLife[i] = l;
   boxSave();
   return true;
 }
@@ -108,6 +117,7 @@ bool Party::boxAdd(const PartyMon &m) {
 void Party::boxReleaseAt(uint8_t i) {
   if (i >= BOX_SLOTS) return;
   box[i] = PartyMon();
+  boxLife[i] = PartyLife();
   boxSave();
 }
 
@@ -116,6 +126,9 @@ void Party::swapPartyBox(uint8_t partyIdx, uint8_t boxIdx) {
   PartyMon t = slots[partyIdx];
   slots[partyIdx] = box[boxIdx];
   box[boxIdx] = t;
+  PartyLife tl = life[partyIdx];
+  life[partyIdx] = boxLife[boxIdx];
+  boxLife[boxIdx] = tl;
   save();
   boxSave();
 }
@@ -133,23 +146,26 @@ int Party::firstFree() const {
   return -1;
 }
 
-bool Party::add(const PartyMon &m) {
+bool Party::add(const PartyMon &m, const PartyLife &l) {
   int i = firstFree();
   if (i < 0) return false;
   slots[i] = m;
+  life[i] = l;
   save();
   return true;
 }
 
-void Party::replaceAt(uint8_t i, const PartyMon &m) {
+void Party::replaceAt(uint8_t i, const PartyMon &m, const PartyLife &l) {
   if (i >= PARTY_SLOTS) return;
   slots[i] = m;
+  life[i] = l;
   save();
 }
 
 void Party::releaseAt(uint8_t i) {
   if (i >= PARTY_SLOTS) return;
   slots[i] = PartyMon();
+  life[i] = PartyLife();
   save();
 }
 

@@ -36,22 +36,40 @@ struct PartyMon {
   bool empty() const { return dex < 1; }
 };
 
+// Lo que un PartyMon no guarda de la vida de la mascota (edad exacta, vinculo,
+// peso, descuidos...), para que CRIAR la devuelva tal cual la dejaste. Va en
+// claves NVS propias, "plife" y "blife", paralelas a "party" y "box": esas no
+// cambian de formato (ver el aviso de begin() sobre agrandar PartyMon) y un
+// guardado antiguo simplemente no tiene estas, asi que sus huecos quedan con
+// valid = 0 y vuelven a criarse con la edad de su nivel.
+struct PartyLife {
+  uint8_t valid = 0;
+  uint8_t bond = 0, bondToday = 0, weight = 0;
+  uint8_t careMistakes = 0, mistakeCooldown = 0;
+  uint8_t berryKnown = 0, lastLearnLevel = 0, evoPen = 0, evoDeclinedLv = 0;
+  uint16_t goodTicks = 0;
+  uint32_t ageMinutes = 0;
+  uint32_t farDeclinedAge = 0;
+};
+
 class Party {
 public:
   PartyMon slots[PARTY_SLOTS];
   PartyMon box[BOX_SLOTS];
+  PartyLife life[PARTY_SLOTS];     // la vida de slots[i]
+  PartyLife boxLife[BOX_SLOTS];    // la vida de box[i]
 
   void begin();                 // load from NVS
   uint8_t count() const;
   bool isFull() const { return count() >= PARTY_SLOTS; }
   int firstFree() const;        // index of the first empty slot, -1 if full
-  bool add(const PartyMon &m);  // into the first free slot; false if full
-  void replaceAt(uint8_t i, const PartyMon &m);
+  bool add(const PartyMon &m, const PartyLife &l = PartyLife());  // into the first free slot; false if full
+  void replaceAt(uint8_t i, const PartyMon &m, const PartyLife &l = PartyLife());
   void releaseAt(uint8_t i);    // free a slot again
   void save();
   uint8_t boxCount() const;
   int boxFirstFree() const;
-  bool boxAdd(const PartyMon &m);     // into the first free box slot
+  bool boxAdd(const PartyMon &m, const PartyLife &l = PartyLife());     // into the first free box slot
   void boxReleaseAt(uint8_t i);
   void boxSave();
   // Swaps a party slot with a box slot. Either may be empty, so this doubles as

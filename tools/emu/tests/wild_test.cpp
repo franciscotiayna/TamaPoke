@@ -192,11 +192,24 @@ static void testPersist() {
      "monedas y contadores sobreviven a un reinicio");
 }
 
+static void testToParty() {
+  PartyMon pm; PartyLife pl;
+  WildMon wm;
+  wm.dex = 25; wm.level = 12; wm.shiny = true; wm.ivAtk = 30; wm.ivDef = 9; wm.ivSpe = 31; wm.ivHp = 8;
+  uint8_t mv[MOVE_SLOTS] = { 1, 2, 0, 0 };
+  wildToParty(wm, mv, pm, pl);
+  ck(pm.dex == 25 && pm.level == 12 && pm.shiny == 1 && pm.ivAtk == 30 && pm.ivSpe == 31 &&
+     pm.moves[0] == 1 && pm.moves[1] == 2 && pm.trAtk == 0, "el capturado entra con nivel, IVs, movimientos y shiny");
+  ck(pl.valid && pl.ageMinutes == 11UL * MINUTES_PER_LEVEL && pl.lastLearnLevel == 12 && pl.bond == 0,
+     "su edad equivale a su nivel");
+}
+
 int main() {
   testPersist();
   testEconomy();
   testCatch();
   testRoll();
+  testToParty();
   printf(bad ? "%d FAILED\n" : "all passed\n", bad);
   return bad ? 1 : 0;
 }

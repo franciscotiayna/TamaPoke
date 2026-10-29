@@ -177,3 +177,16 @@ void wildSave(const WildState &w) {
   pr.putUShort("wmed", w.paidMedals);
   pr.end();
 }
+
+void wildToParty(const WildMon &w, const uint8_t moves[MOVE_SLOTS], PartyMon &m, PartyLife &l) {
+  m = PartyMon();
+  l = PartyLife();
+  m.dex = w.dex;
+  m.level = w.level;
+  m.shiny = w.shiny ? 1 : 0;
+  m.ivAtk = w.ivAtk; m.ivDef = w.ivDef; m.ivSpe = w.ivSpe; m.ivHp = w.ivHp;
+  for (int i = 0; i < MOVE_SLOTS; i++) m.moves[i] = moves[i];
+  l.valid = 1;
+  l.ageMinutes = (uint32_t)(w.level ? w.level - 1 : 0) * MINUTES_PER_LEVEL;
+  l.lastLearnLevel = w.level;   // no repetir las ofertas de movimientos ya pasadas
+}

@@ -66,6 +66,9 @@ bool wildFlees(uint8_t failedThrows);
 // false si la mascota es un huevo o no hay nada que sacar.
 bool wildRoll(Pet &p, WildMon &out);
 
+// El capturado como miembro del equipo: entrenamiento a 0, edad = su nivel.
+void wildToParty(const WildMon &w, const uint8_t moves[MOVE_SLOTS], PartyMon &m, PartyLife &l);
+
 // NVS, en el espacio "tamapoke" de siempre (WIPE lo borra con todo lo demas).
 // Sin guardado previo arranca con los valores iniciales y marca como ya
 // pagados el cuidado de hoy y las medallas que ya tiene el jugador.
