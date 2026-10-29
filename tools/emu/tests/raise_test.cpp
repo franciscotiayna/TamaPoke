@@ -79,9 +79,35 @@ static void testBankRaise() {
      "un guardado antiguo vuelve con la edad de su nivel");
 }
 
+static void testStoredEgg() {
+  Pet p;
+  p.begin();
+  p.dbgHatchAs(4, false);
+  p.registerCaught(4, false);       // ya hay registrados: el huevo nuevo no pide inicial
+  p.newEgg();
+  ck(p.isEgg() && !p.awaitingStarter(), "hay un huevo esperando");
+  int16_t target = p.eggPeek();
+  ck(p.stashEgg() && p.hasStoredEgg(), "guarda el huevo aparte");
+  ck(!p.stashEgg(), "solo cabe un huevo guardado");
+
+  PartyMon m;
+  m.dex = 7; m.level = 15;
+  p.raiseFrom(m, PartyLife());
+  ck(!p.isEgg() && p.speciesId == 7, "otro ocupa su lugar");
+
+  Pet q;
+  q.begin();                        // carga desde NVS
+  ck(q.hasStoredEgg(), "el huevo guardado sobrevive a un reinicio");
+
+  ck(p.restoreEgg() && p.isEgg() && p.eggPeek() == target && !p.hasStoredEgg(),
+     "vuelve el mismo huevo");
+  ck(!p.restoreEgg(), "no hay segundo huevo que restaurar");
+}
+
 int main() {
   testPartyLife();
   testBankRaise();
+  testStoredEgg();
   printf(bad ? "%d FAILED\n" : "all passed\n", bad);
   return bad ? 1 : 0;
 }

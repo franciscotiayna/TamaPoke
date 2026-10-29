@@ -33,6 +33,7 @@ const SaveField SAVE_FIELDS[] = {
   // the banked creatures
   { "party", SK_BYTES }, { "box", SK_BYTES },
   { "plife", SK_BYTES }, { "blife", SK_BYTES },   // su vida, para CRIAR (party.h)
+  { "egg2", SK_BYTES },                            // huevo apartado (pet.h)
   // encuentros salvajes: monedas, bolas y contadores del dia (wild.cpp)
   { "wini", SK_BOOL },  { "wcoin", SK_U16 },  { "wball", SK_U8 },
   { "wexp", SK_U8 },    { "wamb", SK_U8 },    { "wday", SK_U32 },

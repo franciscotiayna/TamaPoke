@@ -81,6 +81,20 @@ uint8_t regionOfDex(int16_t d);
 // REGION_COUNT, which would land on a locked region and silently do nothing.
 uint8_t nextAvailableRegion(uint8_t from);
 
+// Un huevo apartado al poner a criar a otro (CRIAR con un huevo esperando).
+// Conserva lo ya sorteado (especie, shiny) y su progreso. Clave NVS "egg2".
+struct StoredEgg {
+  uint8_t valid = 0;
+  uint8_t eggTaps = 0;
+  uint8_t eggShiny = 0;
+  uint8_t lastEnd = 0;
+  uint8_t evoPen = 0;
+  uint8_t pad = 0;
+  int16_t eggTarget = 1;
+  uint32_t ageMinutes = 0;
+  int16_t eggByRegion[REGION_COUNT] = { 0 };
+};
+
 class Pet {
 public:
   // Estadisticas 0..100
@@ -208,6 +222,9 @@ public:
   // despedirse. Las necesidades se restauran; todo lo demas vuelve tal cual.
   void bankFull(PartyMon &m, PartyLife &l) const;
   void raiseFrom(const PartyMon &m, const PartyLife &l);
+  bool hasStoredEgg() const { return storedEgg.valid != 0; }
+  bool stashEgg();      // aparta el huevo activo; false si no es huevo o ya hay uno
+  bool restoreEgg();    // lo vuelve a poner como mascota activa
 
   // The player's own name, alongside the badges and the streak: it belongs to
   // whoever is playing, not to the creature, so newEgg() must never clear it.
@@ -452,6 +469,7 @@ private:
   uint32_t evolveUntil = 0;
   int16_t eggTarget = 1;       // dex oculto que saldra del huevo
   bool eggShiny = false;       // sorpresa sorteada al crear el huevo
+  StoredEgg storedEgg;
   uint8_t eggTaps = 0;
   uint8_t mistakeCooldown = 0;
   uint8_t ticksSinceSave = 0;

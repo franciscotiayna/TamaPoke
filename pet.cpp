@@ -51,6 +51,7 @@ void Pet::begin() {
   memset(dexReg, 0, sizeof(dexReg));
   memset(dexShinyReg, 0, sizeof(dexShinyReg));
   for (int i = 0; i < REGION_COUNT; i++) eggByRegion[i] = 0;
+  storedEgg = StoredEgg();   // la rama de primer arranque no pasa por load()
   if (!prefs.getBool("init", false)) {
     prefs.putBool("init", true);
     newEgg();
@@ -152,7 +153,7 @@ void Pet::update(uint32_t nowMs) {
   // fin de ceremonia: la criatura se va y queda un huevo nuevo
   if (ceremony != CER_NONE && millis() > ceremonyUntil) {
     snapshotForParty();  // hand it over BEFORE newEgg() erases everything
-    newEgg();
+    if (!restoreEgg()) newEgg();   // un huevo apartado tiene preferencia
     return;
   }
   while (nowMs - lastTick >= PET_TICK_MS) {
@@ -339,6 +340,56 @@ void Pet::raiseFrom(const PartyMon &m, const PartyLife &l) {
     farDeclinedAge = 0;
   }
   save();
+}
+
+bool Pet::stashEgg() {
+  if (!isEgg() || starterPick || storedEgg.valid) return false;
+  storedEgg = StoredEgg();
+  storedEgg.valid = 1;
+  storedEgg.eggTaps = eggTaps;
+  storedEgg.eggShiny = eggShiny ? 1 : 0;
+  storedEgg.lastEnd = lastEnd;
+  storedEgg.evoPen = evoPen;
+  storedEgg.eggTarget = eggTarget;
+  storedEgg.ageMinutes = ageMinutes;
+  for (int i = 0; i < REGION_COUNT; i++) storedEgg.eggByRegion[i] = eggByRegion[i];
+  if (opened) prefs.putBytes("egg2", &storedEgg, sizeof(storedEgg));
+  return true;
+}
+
+bool Pet::restoreEgg() {
+  if (!storedEgg.valid) return false;
+  // Lo que newEgg() deja a cero en un huevo recien puesto; el resto (vinculo,
+  // medallas, apodo, movimientos, entrenamiento) lo reinicia hatch() igual que
+  // tras newEgg(), asi que aqui no hace falta tocarlo.
+  // La deuda de una retirada anticipada (retirePending) cae sobre el huevo que
+  // va a nacer, como en newEgg(): un dia como mucho, sin acumular.
+  uint8_t debt = retirePending ? EVO_PENALTY_LEVELS : 0;
+  ceremony = CER_NONE;
+  neglectTicks = 0;
+  frozen = false;
+  retirePending = false;
+  starterPick = false;
+  speciesId = -1;
+  prevSpeciesId = -1;
+  eggTaps = storedEgg.eggTaps;
+  eggShiny = storedEgg.eggShiny != 0;
+  lastEnd = storedEgg.lastEnd;
+  evoPen = storedEgg.evoPen > debt ? storedEgg.evoPen : debt;
+  eggTarget = storedEgg.eggTarget;
+  ageMinutes = storedEgg.ageMinutes;
+  for (int i = 0; i < REGION_COUNT; i++) eggByRegion[i] = storedEgg.eggByRegion[i];
+  careMistakes = 0;
+  mistakeCooldown = 0;
+  fullness = joy = energy = 80;
+  hygiene = 100;
+  poops = 0;
+  weight = 0;
+  sleeping = false;
+  storedEgg = StoredEgg();
+  if (opened) prefs.putBytes("egg2", &storedEgg, sizeof(storedEgg));
+  save();
+  return true;
 }
 
 void Pet::snapshotForParty() {
@@ -1457,4 +1508,8 @@ void Pet::load() {
   checkLearnGates();
   // siembra: la mascota actual cuenta como criada (guardados antiguos)
   if (speciesId >= 1) registerSpecies(speciesId);
+  storedEgg = StoredEgg();
+  if (prefs.getBytesLength("egg2") == sizeof(storedEgg))
+    prefs.getBytes("egg2", &storedEgg, sizeof(storedEgg));
+  if (storedEgg.eggTarget < 1 || storedEgg.eggTarget > DEX_COUNT) storedEgg = StoredEgg();
 }
