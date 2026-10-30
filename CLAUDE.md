@@ -4,6 +4,64 @@ Gen-1-Pokémon tamagotchi firmware for the **Waveshare ESP32-S3-Touch-AMOLED-1.7
 Arduino/C++ firmware + a Python asset pipeline + a browser-based flasher.
 Personal, non-commercial fan project. Code MIT; sprites CC BY-NC (PMD SpriteCollab).
 
+## Esta rama: `dylan-1.75c` (port a la 1.75C + encuentros salvajes)
+
+Fork de DylanPDao llevado a la **Waveshare ESP32-S3-Touch-AMOLED-1.75C** (la de
+carcasa CNC de aluminio) desde la rama `board-1.75c` de este mismo repo, más un
+sistema de encuentros salvajes y captura. Lo de abajo (layout, reglas, trampas) es
+de Dylan y sigue valiendo; esta sección manda donde difiera.
+
+### Hardware 1.75C (distinto de la 1.75 original)
+- **Sin microSD:** los sprites van en la partición FAT `ffat` de la flash interna
+  (`partitions.csv`: app 4 MB en 0x10000, `ffat` 27,9 MB en 0x410000). `sdmon.cpp`
+  usa `FFat` vía `SPRITE_FS`.
+- **Sin RTC:** la hora la lleva el reloj del sistema; se pierde con un corte de
+  energía. `setup()` siembra con la última hora guardada para no ir hacia atrás.
+- **Pines:** LCD_RESET=1, TP_RESET=2, I2S MCLK=16, GPIO3 = tecla PWR (sin R9:
+  pull-up interno, pulsada = HIGH).
+- **Tecla PWR:** corta = pantalla; larga 2,5 s = `suspend()` (deep sleep, despierta
+  por GPIO3); 10 s = corte del PMU.
+
+### Compilar, grabar, probar
+```bash
+arduino-cli compile --fqbn "esp32:esp32:esp32s3:CDCOnBoot=cdc,FlashSize=32M,PSRAM=opi,PartitionScheme=custom" --output-dir build .
+```
+- **Antes de grabar, siempre copia de seguridad completa** (el usuario lo pidió):
+  `esptool read-flash 0 0x2000000` a `C:\Users\Tarrito\Documents\TamaPoke-backups\`
+  con su `.sha256`. Restaurar: `write-flash 0x0 <copia>.bin`.
+- Grabar solo el juego (conserva partida y sprites): `esptool --port COM5 --baud
+  921600 write-flash 0x10000 build/TamaPoke.ino.bin`. Puerto por VID 0x303A.
+- Sprites: `python tools/send_sd.py --port COM5` los sube comprimidos (`TPKZ`, zlib;
+  `PmdMon::load` los descomprime con el miniz de la ROM). Los 809 + shinies ocupan
+  ~6,4 MB de FAT.
+- Tests del emulador en Windows: MSYS2 UCRT64 (g++ + SDL2). Desde Git Bash:
+  `MSYSTEM=UCRT64 CHERE_INVOKING=1 /c/msys64/usr/bin/bash.exe -lc "cd <repo> && bash
+  tools/emu/tests/run.sh [filtro]" </dev/null` (sin `</dev/null` se puede colgar).
+- Consola serie: abrir con DTR/RTS a False o la placa se reinicia.
+
+### Encuentros salvajes, captura y criar
+- Spec y planes: `docs/superpowers/specs/2026-10-28-encuentros-salvajes-captura-design.md`,
+  `docs/superpowers/specs/2026-10-30-biomas-explorar-design.md` y sus planes en
+  `docs/superpowers/plans/`.
+- `wild.cpp/.h`: lógica pura (testeada en `tools/emu/tests/wild_test.cpp`):
+  - Monedas, Pokéballs y tienda (10 monedas la bola; máx. 50 bolas y 9.999 monedas),
+    5 búsquedas y 3 avisos «¡!» al día.
+  - Sorteo por **bioma** (`DEX_TBL[d].biome`, las 809 especies, sin mirar la región)
+    con **nivel por especie** (nunca sale listo para evolucionar; techo mascota + 5).
+  - Captura con el **ratio real de cada especie** (`catchrate.h`, generado con
+    `tools/gen_catch.py` desde PokéAPI): una sola tirada `a/255`; los tambaleos son
+    animación.
+- `PartyLife` (`party.h`): la vida de cada hueco del equipo/caja en claves `plife`
+  y `blife`; `Pet::bankFull`/`raiseFrom` para CRIAR sin perder nada; huevo apartado
+  en `egg2`; bendición de despedida una vez por criatura (`bless`).
+- Regla ante cortes de luz en todo lo que mueve criaturas: **primero el equipo o la
+  caja, luego la mascota**; un corte puede duplicar, nunca perder.
+- Escrituras en NVS (congelan ~1 s): las de la tienda, el bioma y el aviso se
+  aplazan con `wildDirty`/`wildFlush()` (al salir de Explorar, al atenuarse o al
+  suspender).
+- Consola: `WILD` (encuentro en el bioma actual), `WILD <dex> [nivel]`, `COINS <n>`,
+  `BALLS <n>`, `WILDINFO` (monedas, bolas, búsquedas, avisos, bioma, huevo).
+
 ## Layout
 
 | Path | What |
