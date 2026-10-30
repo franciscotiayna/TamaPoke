@@ -325,7 +325,10 @@ void Pet::bankFull(PartyMon &m, PartyLife &l) const {
   // (startFarewell() lo deja asi solo si aun no habia cobrado la bendicion; una
   // retirada anticipada lo pone en RELEASE). bankFull() se llama con la
   // ceremonia aun en curso (snapshotForParty), asi que esto es la criatura que se va.
-  l.blessUsed = (blessUsed || (ceremony == CER_FAREWELL && lastEnd == CER_FAREWELL)) ? 1 : 0;
+  // Si hay un huevo apartado, restoreEgg() lo recupera al acabar la ceremonia y
+  // pisa lastEnd: la bendicion no llega a ningun huevo, asi que la criatura
+  // NO se marca como bendecida (podra cobrarla en otra despedida).
+  l.blessUsed = (blessUsed || (ceremony == CER_FAREWELL && lastEnd == CER_FAREWELL && !storedEgg.valid)) ? 1 : 0;
 }
 
 void Pet::raiseFrom(const PartyMon &m, const PartyLife &l) {

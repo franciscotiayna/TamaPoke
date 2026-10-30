@@ -25,7 +25,7 @@ enum : uint8_t { AIM_MISS = 0, AIM_OK, AIM_GOOD, AIM_PERFECT };
 struct WildMon {
   int16_t dex = 0;
   uint8_t level = 1;
-  uint8_t tier = R_COMUN;     // R_COMUN / R_RARO / R_LEGENDARIO: cuanto aparece y su nivel
+  uint8_t tier = R_COMUN;     // R_COMUN / R_RARO / R_LEGENDARIO: cuanto aparece; solo el legendario cambia el nivel (+10)
   bool shiny = false;
   uint8_t ivAtk = 16, ivDef = 16, ivSpe = 16, ivHp = 16;
 };

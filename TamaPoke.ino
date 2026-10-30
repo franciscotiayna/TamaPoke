@@ -2831,8 +2831,8 @@ void render() {
     }
   }
 
-  if (raiseAskUp()) {   // sin la pista cuando el "Si" acabaria siendo un "No"
-    drawConfirmPanel(T(S_RAISE_Q), raiseNowOk() ? T(S_RAISE_HINT) : nullptr, nullptr, UI_TRACK,
+  if (raiseAskUp()) {   // sin la pista cuando el "Si" acabaria siendo un "No", ni con un huevo (se aparta, no va al equipo)
+    drawConfirmPanel(T(S_RAISE_Q), raiseNowOk() && !pet.isEgg() ? T(S_RAISE_HINT) : nullptr, nullptr, UI_TRACK,
                      T(S_YES), UI_BAR_OK, UI_WHITE, T(S_NO), UI_TRACK, UI_INK);
   }
 
@@ -3971,6 +3971,19 @@ static void wildCaught() {
 
 // Fin de los tambaleos: capturado, o se escapa de la bola, quiza huye, y si no
 // el salvaje juega su turno como en los juegos.
+// Premio por debilitar a un salvaje (lo comparten btlThrowFinish y btlResolve):
+// 5 monedas, un punto de entrenamiento si peleo la mascota viva, y la narracion
+// de victoria en una sola linea (la cola solo ensena 4).
+static void wildWinReward() {
+  btlTrainGain = 0;
+  wildEarn(gWild, 5);
+  wildSaveNow();
+  if (btlPetIn) btlTrainGain = pet.rewardTraining(1, btlTrainWhich);
+  char c[20];
+  snprintf(c, sizeof(c), T(S_WILD_COINS_FMT), 5u);
+  btlSay("%s %s", T(S_BTL_WIN), c);
+}
+
 static void btlThrowFinish() {
   throwStage = 0;
   if (throwShakes >= 3) { wildCaught(); return; }
@@ -4009,15 +4022,9 @@ static void btlThrowFinish() {
     // Cayo por la quemadura o el veneno del final del turno: eso lo puso tu
     // mascota, asi que cuenta como victoria, igual que en btlResolve.
     btlWon = true;
-    btlTrainGain = 0;
-    wildEarn(gWild, 5);
-    wildSaveNow();
-    if (btlPetIn) btlTrainGain = pet.rewardTraining(1, btlTrainWhich);
+    wildWinReward();
     audioMusic(MUS_VICTORY);
     sfxPlay(SFX_VICTORY);
-    char c[20];
-    snprintf(c, sizeof(c), T(S_WILD_COINS_FMT), 5u);
-    btlSay("%s %s", T(S_BTL_WIN), c);
     return;
   }
   if (btlYou.fainted()) {
@@ -4281,11 +4288,7 @@ static void btlResolve(uint8_t yourMove) {
     }
     // monedas: medalla nueva 50, repetir un gimnasio 15, debilitar un salvaje 5
     if (btlWon && btlTrainer >= 0) { wildEarn(gWild, btlNewBadge ? 50 : 15); wildSaveNow(); }
-    if (btlWon && btlWild) {
-      wildEarn(gWild, 5);
-      wildSaveNow();
-      if (btlPetIn) btlTrainGain = pet.rewardTraining(1, btlTrainWhich);
-    }
+    if (btlWon && btlWild) wildWinReward();   // tambien narra la victoria
     audioMusic(btlWon ? MUS_VICTORY : MUS_NONE);
     if (btlWon) sfxPlay(SFX_VICTORY);
     // Tell the peer before anything else: if we stop here without sending, the
@@ -4293,13 +4296,7 @@ static void btlResolve(uint8_t yourMove) {
     if (btlLink && btlLinkHost) lan.sendEnd(btlWon);
     if (btlLink) { btlSay("%s", btlWon ? T(S_BTL_WIN) : T(S_BTL_LOSE)); return; }
     if (btlWon && btlTrainer >= 0) { btlWinUntil = millis() + 60000; return; }
-    if (btlWon && btlWild) {   // una linea: la narracion solo ensena 4
-      char c[20];
-      snprintf(c, sizeof(c), T(S_WILD_COINS_FMT), 5u);
-      btlSay("%s %s", T(S_BTL_WIN), c);
-    } else {
-      btlSay("%s", btlWon ? T(S_BTL_WIN) : T(S_BTL_LOSE));
-    }
+    if (!(btlWon && btlWild)) btlSay("%s", btlWon ? T(S_BTL_WIN) : T(S_BTL_LOSE));
   }
 }
 

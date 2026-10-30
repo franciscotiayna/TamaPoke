@@ -54,8 +54,10 @@ arduino-cli compile --fqbn "esp32:esp32:esp32s3:CDCOnBoot=cdc,FlashSize=32M,PSRA
 - `PartyLife` (`party.h`): la vida de cada hueco del equipo/caja en claves `plife`
   y `blife`; `Pet::bankFull`/`raiseFrom` para CRIAR sin perder nada; huevo apartado
   en `egg2`; bendición de despedida una vez por criatura (`bless`).
-- Regla ante cortes de luz en todo lo que mueve criaturas: **primero el equipo o la
-  caja, luego la mascota**; un corte puede duplicar, nunca perder.
+- Regla ante cortes de luz en los flujos nuevos que mueven criaturas (CRIAR, captura,
+  píldora del huevo): **primero el equipo o la caja, luego la mascota**; un corte
+  puede duplicar, nunca perder. (La vuelta de un huevo apartado al acabar una
+  ceremonia es de Dylan y guarda la mascota primero.)
 - Escrituras en NVS (congelan ~1 s): las de la tienda, el bioma y el aviso se
   aplazan con `wildDirty`/`wildFlush()` (al salir de Explorar, al atenuarse o al
   suspender).
@@ -662,7 +664,7 @@ that its level never rises again.
 `ageMinutes` is simply set to match the banked level rather than adding a second
 source of truth, so `level()` needs no special case. Offered ONLY while an egg
 is waiting -- otherwise it would silently destroy whatever creature is alive,
-and the button says why when it is greyed.
+and the button says why when it is greyed. (sustituido por CRIAR en dylan-1.75c)
 
 Note for anyone reading the farewell timing: 3 days is when it is first OFFERED
 (level 73), not when the creature is finished -- 100 comes at 4d 3h, and

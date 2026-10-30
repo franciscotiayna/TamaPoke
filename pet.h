@@ -212,6 +212,7 @@ public:
   // improving; ageMinutes is simply set to match its banked level, which keeps
   // level() working untouched rather than needing a second source of truth.
   bool frozen = false;
+  // solo lo usa revive_test; el juego usa raiseFrom (CRIAR)
   void reviveFrom(const PartyMon &m);
 
   // Lo capturado cuenta en la Pokedex como lo criado. registerSpecies() mira

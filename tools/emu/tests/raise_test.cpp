@@ -165,6 +165,18 @@ static void testCeremonyRestoresEgg() {
   }
 }
 
+static void testBlessKeptWhenStoredEggTakesOver() {
+  // la bendicion no se gasta si un huevo apartado ocupa el sitio del huevo nuevo
+  Pet p;
+  int16_t target = liveWithStoredEgg(p, 7);
+  p.startFarewell();
+  ck(p.lastEnd == CER_FAREWELL, "(la despedida bendeciria un huevo nuevo)");
+  finish(p);
+  ck(p.isEgg() && p.eggPeek() == target && !p.hasStoredEgg(), "el huevo apartado es el activo");
+  ck(p.endedKind == CER_FAREWELL && p.endedLife.valid && p.endedLife.blessUsed == 0,
+     "y la criatura que se va NO queda marcada como bendecida");
+}
+
 static void testBlessOnce() {
   Pet p;
   p.begin();
@@ -232,6 +244,7 @@ int main() {
   testPartyLife();
   testCeremonyRestoresEgg();
   testBlessOnce();
+  testBlessKeptWhenStoredEggTakesOver();
   testNoLeaks();
   testLifeRoundTrip();
   testBankRaise();

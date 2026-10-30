@@ -11,6 +11,7 @@
 #include "pet.h"
 #include "party.h"
 #include "save.h"
+#include "wild.h"
 #include <cstdio>
 #include <set>
 #include <string>
@@ -27,6 +28,11 @@ int main(){
   // both ladders, a Pokedex with holes in it, a named trainer
   Pet pet;
   pet.begin();
+  pet.dbgHatchAs(6,true);
+  // a set-aside egg ("egg2"): roll an egg, put it away, go back to the creature.
+  // The completeness check only sees keys that something actually wrote.
+  pet.newEgg();
+  ck(pet.stashEgg(), "(setup) an egg is set aside");
   pet.dbgHatchAs(6,true);
   pet.ageMinutes = 72UL*MINUTES_PER_LEVEL;
   pet.ivAtk=31; pet.ivDef=7; pet.ivSpe=22; pet.ivHp=19;
@@ -50,6 +56,9 @@ int main(){
   // renameTrainer() persists, and save() writes every field -- so this is also
   // what commits everything set above. save() itself is private on purpose.
   pet.renameTrainer("DYLAN");
+  // and the wild-encounter state (wini, wcoin, wball, wexp, wamb, wday, wcare,
+  // wmed, wbio) -- written by the wild code, not by Pet
+  wildSave(WildState());
 
   // --- COMPLETENESS. Everything the firmware stored must be in the table.
   // This is what stops the backup rotting: add a key to pet.cpp and forget
@@ -137,6 +146,7 @@ int main(){
   }
   ck(party_ok, "with every level, moveset and nickname");
   ck(q2.slots[2].shiny, "and a banked shiny is still shiny");
+  ck(p2.hasStoredEgg(), "the egg set aside is still set aside");
   ck(q2.boxCount()==BOX_SLOTS, "the box comes back full");
   ck(q2.box[7].dex==1+7*3 && q2.box[7].level==17, "with the right creatures in it");
 

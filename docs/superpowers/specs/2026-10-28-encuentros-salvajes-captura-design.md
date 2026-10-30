@@ -30,11 +30,11 @@ captura en combates LAN o de gimnasio, guardería que haga crecer a los guardado
 
 - **`wild.cpp/.h` (nuevo), solo lógica, sin pantalla ni hardware**, igual que
   `battle.cpp`: sorteo del encuentro, fórmula de captura y tambaleos, monedas y
-  Pokéballs, contadores diarios. Recibe el azar y el día como parámetros para
-  poder testearlo en el emulador (`tools/emu`).
+  Pokéballs, contadores diarios. Usa `random()` (con semilla en el emulador, `tools/emu`) y recibe el
+  día donde hace falta, para poder testearlo.
 - **`TamaPoke.ino`**: pantallas (EXPLORAR, tienda, burbuja «¡!», BALL con anillo,
   diálogo «¿Criarlo ahora?»), el disparo de encuentros y los comandos serie.
-- **`pet.cpp/.h` y `party.cpp/.h`**: `PartyMon` ampliado, intercambio completo
+- **`pet.cpp/.h` y `party.cpp/.h`**: `PartyLife` (tabla paralela), intercambio completo
   Pet ↔ PartyMon, huevo guardado.
 - **`i18n.cpp/.h`**: textos nuevos en los 6 idiomas.
 
@@ -62,12 +62,16 @@ placa pierde la hora el reinicio diario puede retrasarse; no rompe nada.
 
 ## 2. Qué Pokémon aparece
 
+> Superado en parte por `2026-10-30-biomas-explorar-design.md`: al explorar se elige bioma y no se mira la región; el nivel es por especie (ver §2.4).
+
 1. **Legendario:** 1 % si hay 25 o más especies registradas. Nivel = nivel de la
-   mascota + 10, mínimo 40. Se elige entre los legendarios de la región.
+   mascota + 10, mínimo 40. Se elige entre los legendarios del bioma
+   (superado por el spec de biomas).
 2. **Si no, rareza** con el mismo sorteo que los huevos (`rollInRegion`): común o
    raro, con los mismos bonus por racha y vínculo y la misma preferencia por
    líneas evolutivas incompletas.
-3. **Región:** la elegida para los huevos (`region`); `REGION_ALL` sortea en todas.
+3. **Región:** explorar ya no la mira (superado por el spec de biomas: se elige
+   bioma y salen especies de cualquier región); solo los huevos usan `region`.
 4. **Nivel por especie** (como en los juegos): desde el nivel al que evoluciona su
    forma anterior (2 si es forma base) hasta su propio nivel de evolución − 1, o
    el mínimo + 15 si ya no evoluciona. Las especies que ni evolucionan ni vienen de
@@ -259,7 +263,7 @@ Pokéballs, exploraciones de hoy, avisos de hoy y día del último reinicio.
 ## 10. Pruebas
 
 **Tests de lógica** (`tools/emu/tests/wild_test.cpp`, con el sistema de Dylan):
-- Sorteo: región, rareza, nivel ±3 y topes, legendario solo con 25+ registrados,
+- Sorteo: región, rareza, nivel por especie y topes, legendario solo con 25+ registrados,
   formas evolucionadas, especies sin arte excluidas.
 - Captura: fórmula con valores conocidos, acotación a [1, 255], tambaleos, huida
   desde el cuarto fallo.
