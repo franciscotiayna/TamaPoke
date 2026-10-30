@@ -151,6 +151,8 @@ enum StrId : uint8_t {
   S_RAISE_NO,       // por que no se puede criar ahora
   S_EGG_SLOT,       // pildora del huevo guardado
   S_WILD_COINS_FMT, // "+%u monedas"
+  // biomas de EXPLORAR, en el orden de DEX_TBL.biome (0..5)
+  S_BIOME_GRASS, S_BIOME_WATER, S_BIOME_FOREST, S_BIOME_VOLCANO, S_BIOME_CAVE, S_BIOME_SNOW,
   STR_COUNT
 };
 

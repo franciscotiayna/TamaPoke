@@ -50,7 +50,8 @@ static const char *const STRINGS[LANG_COUNT][STR_COUNT] = {
     "sin Pokeballs: no podras capturar", "hoy no quedan busquedas", "Un %s salvaje!", "BALL",
     "PERFECTO", "BIEN", "Atrapaste a %s!", "%s se escapo de la bola!", "%s huyo!",
     "Criarlo ahora?", "tu mascota actual ira al equipo", "CRIAR", "ahora no se puede criar",
-    "HUEVO", "+%u monedas", },
+    "HUEVO", "+%u monedas",
+    "PRADERA", "AGUA", "BOSQUE", "VOLCAN", "CUEVA", "NIEVE", },
   // ---------------- EN ----------------
   {
     "Evolving!", "Yum yum!", "It likes it!", "It's hungry!", "Needs a bath!",
@@ -95,7 +96,8 @@ static const char *const STRINGS[LANG_COUNT][STR_COUNT] = {
     "no Poke Balls: you cannot catch", "no searches left today", "A wild %s appeared!", "BALL",
     "PERFECT", "GOOD", "Gotcha! %s was caught!", "%s broke free!", "%s fled!",
     "Raise it now?", "your current one joins the party", "RAISE", "cannot raise right now",
-    "EGG", "+%u coins", },
+    "EGG", "+%u coins",
+    "MEADOW", "WATER", "FOREST", "VOLCANO", "CAVE", "SNOW", },
   // ---------------- FR ----------------
   {
     "Il evolue!", "Miam miam!", "Il aime ca!", "Il a faim!", "Besoin d'un bain!",
@@ -139,7 +141,8 @@ static const char *const STRINGS[LANG_COUNT][STR_COUNT] = {
     "sans Poke Balls: pas de capture", "plus de recherches aujourd'hui", "Un %s sauvage!", "BALL",
     "PARFAIT", "BIEN", "%s est capture!", "%s s'est libere!", "%s s'enfuit!",
     "L'elever maintenant?", "l'actuel rejoint l'equipe", "ELEVER", "impossible pour l'instant",
-    "OEUF", "+%u pieces", },
+    "OEUF", "+%u pieces",
+    "PRAIRIE", "EAU", "FORET", "VOLCAN", "GROTTE", "NEIGE", },
   // ---------------- DE ----------------
   {
     "Entwickelt sich!", "Mampf mampf!", "Gefaellt ihm!", "Hat Hunger!", "Braucht ein Bad!",
@@ -183,7 +186,8 @@ static const char *const STRINGS[LANG_COUNT][STR_COUNT] = {
     "keine Poke Balls: kein Fangen", "heute keine Suche mehr", "Ein wildes %s!", "BALL",
     "PERFEKT", "GUT", "%s gefangen!", "%s hat sich befreit!", "%s ist geflohen!",
     "Jetzt aufziehen?", "der jetzige kommt ins Team", "AUFZIEHEN", "gerade nicht moeglich",
-    "EI", "+%u Muenzen", },
+    "EI", "+%u Muenzen",
+    "WIESE", "WASSER", "WALD", "VULKAN", "HOEHLE", "SCHNEE", },
   // ---------------- IT ----------------
   {
     "Si evolve!", "Gnam gnam!", "Gli piace!", "Ha fame!", "Vuole un bagno!",
@@ -227,7 +231,8 @@ static const char *const STRINGS[LANG_COUNT][STR_COUNT] = {
     "niente Poke Ball: non puoi catturare", "niente ricerche oggi", "Un %s selvatico!", "BALL",
     "PERFETTO", "BENE", "Preso %s!", "%s si e liberato!", "%s e fuggito!",
     "Allevarlo ora?", "l'attuale va in squadra", "ALLEVA", "ora non si puo allevare",
-    "UOVO", "+%u monete", },
+    "UOVO", "+%u monete",
+    "PRATO", "ACQUA", "BOSCO", "VULCANO", "GROTTA", "NEVE", },
   // ---------------- PT ----------------
   {
     "Evoluindo!", "Nham nham!", "Ele gosta!", "Esta com fome!", "Precisa de banho!",
@@ -271,7 +276,8 @@ static const char *const STRINGS[LANG_COUNT][STR_COUNT] = {
     "sem Pokebolas: nao podes capturar", "sem buscas hoje", "Um %s selvagem!", "BALL",
     "PERFEITO", "BOM", "Apanhaste %s!", "%s libertou-se!", "%s fugiu!",
     "Cria-lo agora?", "o atual vai para a equipa", "CRIAR", "agora nao da para criar",
-    "OVO", "+%u moedas", },
+    "OVO", "+%u moedas",
+    "PRADO", "AGUA", "FLORESTA", "VULCAO", "CAVERNA", "NEVE", },
 };
 
 // Nombres de medalla en sus tres longitudes [idioma][medalla].
