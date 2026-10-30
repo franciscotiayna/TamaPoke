@@ -1158,7 +1158,7 @@ void handleSerial() {
       if (ok) w.tier = DEX_TBL[w.dex].rarity == R_LEGENDARIO ? R_LEGENDARIO
                      : DEX_TBL[w.dex].rarity == R_RARO ? R_RARO : R_COMUN;
     } else {
-      ok = wildRoll(pet, w);
+      ok = wildRoll(pet, w, gWild.biome);
     }
     bool started = false;
     if (ok && wildCanStart() && uiCurrentScreen() == SCR_MAIN) {   // EXPLORAR no es SCR_MAIN
@@ -2359,7 +2359,7 @@ void onTap(int16_t x, int16_t y) {
     if (dx * dx + dy * dy <= WILD_BUB_HIT * WILD_BUB_HIT) {
       wildBubbleUntil = 0;     // ya se conto al aparecer (wildTick)
       WildMon w;
-      if (!wildCanStart() || !wildRoll(pet, w)) { sfxPlay(SFX_DENY); return; }
+      if (!wildCanStart() || !wildRoll(pet, w, gWild.biome)) { sfxPlay(SFX_DENY); return; }
       startWildBattle(w);
       return;
     }
@@ -5921,7 +5921,7 @@ static bool expHit(int16_t x, int16_t y, int top, int h) {
 void exploreTap(int16_t x, int16_t y) {
   if (expHit(x, y, EXP_SEARCH_Y, EXP_SEARCH_H)) {
     WildMon w;
-    if (gWild.explores >= WILD_EXPLORES_PER_DAY || !wildCanStart() || !wildRoll(pet, w)) {
+    if (gWild.explores >= WILD_EXPLORES_PER_DAY || !wildCanStart() || !wildRoll(pet, w, gWild.biome)) {
       sfxPlay(SFX_DENY);
       return;
     }

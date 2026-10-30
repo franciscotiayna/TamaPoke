@@ -90,18 +90,34 @@ static void testCatch() {
   ck(fled > 800 && fled < 1200, "desde el cuarto fallo huye ~25%");
 }
 
+// La especie o alguna de sus formas anteriores es de ese bioma: un salvaje puede
+// salir evolucionado y la forma evolucionada tener otro bioma (misma linea).
+static bool lineHasBiome(int16_t d, uint8_t b) {
+  for (int guard = 0; guard < 4 && d >= 1; guard++) {
+    if (DEX_TBL[d].biome == b) return true;
+    int16_t pre = 0;
+    for (int16_t i = 1; i <= DEX_COUNT && !pre; i++)
+      if (DEX_TBL[i].evolvesTo == d) pre = i;
+    if (!pre)
+      for (int k = 0; k < EEVEE_EVO_COUNT && !pre; k++)
+        if (EEVEE_EVOS[k] == d) pre = DEX_EEVEE;    // ramas de Eevee: no estan en evolvesTo
+    d = pre;
+  }
+  return false;
+}
+
 static void testRoll() {
   Pet p;
   p.begin();
   p.dbgHatchAs(4, false);                        // Charmander
   p.ageMinutes = 19UL * MINUTES_PER_LEVEL;       // nivel 20
   p.region = 0;                                  // Kanto
-  const RegionInfo &rg = REGIONS[0];
-  bool rolled = true, lvOk = true, notReady = true, inRange = true, regOk = true, artOk = true,
-       noLegend = true, evolved = false, lowBase = false;
+  bool rolled = true, lvOk = true, notReady = true, inRange = true, artOk = true,
+       noLegend = true, evolved = false, lowBase = false, biomeOk = true;
+  uint16_t regionsSeen = 0;
   for (int i = 0; i < 500; i++) {
     WildMon m;
-    if (!wildRoll(p, m)) { rolled = false; break; }
+    if (!wildRoll(p, m, 0)) { rolled = false; break; }
     const DexEntry &d = DEX_TBL[m.dex];
     bool evolves = d.evolvesTo && d.evolveLevel;
     int lo = wildPreEvoLevel(m.dex);
@@ -112,9 +128,8 @@ static void testRoll() {
     // y nunca por debajo del nivel al que se llega a esa forma
     if (lo > 2 && m.level < lo) inRange = false;
     if (lo == 2 && evolves && m.level < 10) lowBase = true;
-    // vale porque solo sale evolucionado si la mascota (20) ya llego a ese
-    // nivel, y toda evolucion de Kanto que cruza de region es a partir de 25
-    if (m.dex < rg.lo || m.dex > rg.hi) regOk = false;
+    if (!lineHasBiome(m.dex, 0)) biomeOk = false;
+    regionsSeen |= (uint16_t)1 << regionOfDex(m.dex);
     if (!speciesHasArt(m.dex)) artOk = false;
     if (m.tier == R_LEGENDARIO) noLegend = false;
     if (DEX_TBL[m.dex].rarity == R_EVO) evolved = true;
@@ -126,7 +141,10 @@ static void testRoll() {
   ck(lowBase, "las formas base salen bajas aunque la mascota sea alta");
   ck(wildPreEvoLevel(4) == 2 && wildPreEvoLevel(5) == 16 && wildPreEvoLevel(6) == 36,
      "Charmander desde 2, Charmeleon desde 16, Charizard desde 36");
-  ck(regOk, "solo de la region elegida");
+  ck(biomeOk, "pradera: todo sale de la linea de una especie de pradera");
+  int nReg = 0;
+  for (uint8_t r = 0; r < REGION_COUNT; r++) if (r != REGION_ALL && (regionsSeen >> r & 1)) nReg++;
+  ck(nReg >= 3, "explorar no mira la region: salen especies de varias regiones");
   ck(artOk, "nunca una especie sin arte");
   ck(noLegend, "sin legendarios con menos de 25 registrados");
   ck(evolved, "a nivel 20 a veces sale ya evolucionado");
@@ -139,36 +157,32 @@ static void testRoll() {
   bool legLv = true;
   for (int i = 0; i < 4000; i++) {
     WildMon m;
-    wildRoll(p, m);
+    wildRoll(p, m, 5);
     if (m.tier != R_LEGENDARIO) continue;
     legends++;
     if (m.level < 40 || DEX_TBL[m.dex].rarity != R_LEGENDARIO) legLv = false;
+    if (DEX_TBL[m.dex].biome != 5) legLv = false;
   }
-  ck(legends > 10 && legends < 100, "con 25+ registrados, ~1% legendarios");
+  ck(legends > 0 && legends < 200, "nieve con 25+ registrados: legendarios solo de nieve");
   ck(legLv, "el legendario sale a nivel 40 o mas");
 
-  // el filtro de arte debe poder fallar: Unova es la region con huecos (noart.h)
-  Pet u;
-  u.begin();
-  u.dbgHatchAs(495, false);                      // Snivy
-  u.ageMinutes = 19UL * MINUTES_PER_LEVEL;
-  u.region = 4;                                  // Unova
-  if (!regionAvailable(4)) {
-    ck(true, "Unova sin arte en el emulador: se omite el filtro de arte");
-  } else {
-    const RegionInfo &ug = REGIONS[4];
-    bool uArt = true, uReg = true;
-    int uCount = 0;
-    for (int i = 0; i < 3000; i++) {
+  // cada bioma: solo su linea, nunca sin arte; nieve es el mas pobre
+  for (uint8_t b = 0; b < WILD_BIOMES; b++) {
+    bool ok = true, art = true;
+    int got = 0;
+    for (int i = 0; i < 600; i++) {
       WildMon m;
-      if (!wildRoll(u, m)) { uArt = false; break; }
-      uCount++;
-      if (!speciesHasArt(m.dex)) uArt = false;
-      if (m.dex < ug.lo || m.dex > ug.hi) uReg = false;
+      if (!wildRoll(p, m, b)) continue;
+      got++;
+      if (!lineHasBiome(m.dex, b)) ok = false;
+      if (!speciesHasArt(m.dex)) art = false;
     }
-    ck(uCount == 3000 && uArt, "Unova: ninguna especie sin arte");
-    ck(uReg, "Unova: todas dentro de su region");
+    char msg[64];
+    snprintf(msg, sizeof(msg), "bioma %u: %d salvajes, todos de su linea y con arte", b, got);
+    ck(got > 0 && ok && art, msg);
   }
+  WildMon bad;
+  ck(wildRoll(p, bad, 99) && lineHasBiome(bad.dex, 0), "bioma fuera de rango = pradera");
 
   // Eevee: la rama sale de eeveeOptions(), no solo del 134 de la tabla
   Pet e;
@@ -182,7 +196,7 @@ static void testRoll() {
   int branches = 0, eeveeSeen = 0;
   for (int i = 0; i < 20000; i++) {
     WildMon m;
-    if (!wildRoll(e, m)) continue;
+    if (!wildRoll(e, m, DEX_TBL[DEX_EEVEE].biome)) continue;
     if (m.dex == DEX_EEVEE) eeveeSeen++;
     for (int k = 0; k < EEVEE_EVO_COUNT; k++)
       if (m.dex == EEVEE_EVOS[k] && !seen[k]) { seen[k] = true; branches++; }
@@ -190,6 +204,16 @@ static void testRoll() {
   printf("     Eevee: %u ramas disponibles, %d vistas, %d Eevee sin evolucionar\n",
          nOpt, branches, eeveeSeen);
   ck(nOpt < 2 || branches >= 2, "Eevee evoluciona por mas de una rama");
+}
+
+static void testBiomes() {
+  uint8_t b = 0;
+  const uint8_t order[WILD_BIOMES] = { 0, 2, 1, 4, 3, 5 };
+  bool fwd = true;
+  for (int i = 0; i < WILD_BIOMES; i++) { if (b != order[i]) fwd = false; b = wildBiomeStep(b, +1); }
+  ck(fwd && b == 0, "flecha derecha: PRADERA BOSQUE AGUA CUEVA VOLCAN NIEVE y vuelve");
+  ck(wildBiomeStep(0, -1) == 5 && wildBiomeStep(5, +1) == 0, "flechas en circulo");
+  ck(wildBiomeStep(99, +1) == 2, "bioma invalido cuenta como pradera");
 }
 
 static void testPersist() {
@@ -200,17 +224,19 @@ static void testPersist() {
   wildLoad(first, p);
   ck(first.coins == WILD_START_COINS && first.balls == WILD_START_BALLS,
      "primer arranque: valores iniciales");
+  ck(first.biome == 0, "primer arranque: bioma pradera");
   ck(first.paidMedals == p.totalMedals && first.paidCareDay == p.lastCareDay,
      "primer arranque: no paga medallas ni cuidados anteriores");
 
   WildState s;
   s.coins = 123; s.balls = 7; s.explores = 2; s.ambient = 1;
   s.day = 999; s.paidCareDay = 998; s.paidMedals = 4;
+  s.biome = 4;
   wildSave(s);
   WildState r;
   wildLoad(r, p);
   ck(r.coins == 123 && r.balls == 7 && r.explores == 2 && r.ambient == 1 &&
-     r.day == 999 && r.paidCareDay == 998 && r.paidMedals == 4,
+     r.day == 999 && r.paidCareDay == 998 && r.paidMedals == 4 && r.biome == 4,
      "monedas y contadores sobreviven a un reinicio");
 }
 
@@ -231,6 +257,7 @@ int main() {
   testEconomy();
   testCatch();
   testRoll();
+  testBiomes();
   testToParty();
   printf(bad ? "%d FAILED\n" : "all passed\n", bad);
   return bad ? 1 : 0;

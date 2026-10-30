@@ -73,14 +73,6 @@ bool wildFlees(uint8_t failedThrows) {
 
 #define WILD_CAND_MAX 260   // como CAND_MAX en pet.cpp: cabe la region mas grande
 
-static uint8_t wildRegion(uint8_t want) {
-  // copia local de eggRegionFallback() de pet.cpp (alli es static)
-  if (regionAvailable(want)) return want;
-  for (uint8_t i = 0; i < REGION_COUNT; i++)
-    if (i != REGION_ALL && regionAvailable(i)) return i;
-  return want;
-}
-
 // Nivel al que evoluciona la forma anterior de `dex` (el minimo con el que tiene
 // sentido verlo), o 2 si es una forma base. Las ramas de Eevee no estan en
 // evolvesTo: salen solo por el paso de evolucion de wildRoll, que fija su minimo.
@@ -90,9 +82,10 @@ int wildPreEvoLevel(int16_t dex) {
   return 2;
 }
 
-bool wildRoll(Pet &p, WildMon &m) {
+bool wildRoll(Pet &p, WildMon &m, uint8_t biome) {
   if (p.isEgg()) return false;
-  const RegionInfo &rg = REGIONS[wildRegion(p.region % REGION_COUNT)];
+  if (biome >= WILD_BIOMES) biome = 0;
+  const RegionInfo &rg = REGIONS[REGION_ALL];   // explorar no mira la region
 
   uint8_t tier = R_COMUN;
   int leg = p.registeredCount() >= WILD_LEGEND_MIN_REG ? WILD_LEGEND_PCT : 0;
@@ -109,6 +102,7 @@ bool wildRoll(Pet &p, WildMon &m) {
       int n = 0;
       for (int16_t d = rg.lo; d <= rg.hi && n < WILD_CAND_MAX; d++) {
         if (DEX_TBL[d].rarity != t) continue;
+        if (DEX_TBL[d].biome != biome) continue;
         if (pass == 0 && !p.lineHasUnregistered(d)) continue;
         if (!regionAvailable(regionOfDex(d)) || !speciesHasArt(d)) continue;
         cand[n++] = d;
@@ -185,10 +179,12 @@ void wildLoad(WildState &w, const Pet &p) {
     w.day = pr.getUInt("wday", 0);
     w.paidCareDay = pr.getUInt("wcare", 0);
     w.paidMedals = pr.getUShort("wmed", 0);
+    w.biome = pr.getUChar("wbio", 0);
   }
   pr.end();
   if (w.coins > WILD_COINS_MAX) w.coins = WILD_COINS_MAX;
   if (w.balls > WILD_BALLS_MAX) w.balls = WILD_BALLS_MAX;
+  if (w.biome >= WILD_BIOMES) w.biome = 0;
   if (!init) {
     w.paidCareDay = p.lastCareDay;
     w.paidMedals = p.totalMedals;
@@ -207,6 +203,7 @@ void wildSave(const WildState &w) {
   pr.putUInt("wday", w.day);
   pr.putUInt("wcare", w.paidCareDay);
   pr.putUShort("wmed", w.paidMedals);
+  pr.putUChar("wbio", w.biome);
   pr.end();
 }
 
@@ -221,4 +218,13 @@ void wildToParty(const WildMon &w, const uint8_t moves[MOVE_SLOTS], PartyMon &m,
   l.valid = 1;
   l.ageMinutes = (uint32_t)(w.level ? w.level - 1 : 0) * MINUTES_PER_LEVEL;
   l.lastLearnLevel = w.level;   // no repetir las ofertas de movimientos ya pasadas
+}
+
+static const uint8_t WILD_BIOME_ORDER[WILD_BIOMES] = { 0, 2, 1, 4, 3, 5 };
+
+uint8_t wildBiomeStep(uint8_t biome, int dir) {
+  int at = 0;
+  for (int i = 0; i < WILD_BIOMES; i++) if (WILD_BIOME_ORDER[i] == biome) at = i;
+  at = (at + (dir < 0 ? WILD_BIOMES - 1 : 1)) % WILD_BIOMES;
+  return WILD_BIOME_ORDER[at];
 }

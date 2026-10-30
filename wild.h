@@ -17,6 +17,7 @@
 #define WILD_EVOLVED_PCT 30        // un salvaje con nivel de sobra sale evolucionado
 #define WILD_LEGEND_PCT 1
 #define WILD_LEGEND_MIN_REG 25     // igual que los huevos: legendarios desde 25 registrados
+#define WILD_BIOMES 6               // los de Dylan: DEX_TBL[d].biome (0..5)
 
 // punteria del anillo al lanzar la bola
 enum : uint8_t { AIM_MISS = 0, AIM_OK, AIM_GOOD, AIM_PERFECT };
@@ -39,6 +40,7 @@ struct WildState {
   uint32_t day = 0;           // dia (epoch / 86400) de esos dos contadores
   uint32_t paidCareDay = 0;   // ultimo "primer cuidado del dia" ya pagado
   uint16_t paidMedals = 0;    // pet.totalMedals ya pagadas
+  uint8_t biome = 0;          // bioma elegido en EXPLORAR (valor de DEX_TBL.biome)
 };
 
 void wildNewDay(WildState &w, uint32_t day);   // repone contadores si cambio el dia
@@ -62,14 +64,19 @@ uint8_t wildShakes(uint8_t a);
 // Tras un lanzamiento fallido: desde el cuarto fallo, 25% de que huya.
 bool wildFlees(uint8_t failedThrows);
 
-// Sortea el salvaje: legendario 1% con 25+ registrados (nivel +10, minimo 40);
-// si no, rareza como los huevos (comun / raro con el bonus de cuidado) y
-// prefiriendo lineas incompletas. Region de los huevos. Nivel por especie: desde
-// el nivel de evolucion de su forma anterior hasta el suyo - 1 (nunca sale listo
-// para evolucionar), con techo en el nivel de la mascota + 5. Sale evolucionado
-// (30%) solo si la mascota ya llego a ese nivel. Shiny 1/48 mejorado por el cuidado.
+// Sortea el salvaje de un BIOMA (DEX_TBL[d].biome; fuera de rango = pradera),
+// de las 809 especies sin mirar la region. Legendario 1% con 25+ registrados
+// (solo los del bioma; nivel +10, minimo 40); si no, rareza como los huevos
+// (comun / raro con el bonus de cuidado) prefiriendo lineas incompletas. Nivel por
+// especie: desde el nivel de evolucion de su forma anterior hasta el suyo - 1 (nunca
+// sale listo para evolucionar), con techo en la mascota + 5. Sale evolucionado (30%)
+// solo si la mascota ya llego a ese nivel; la forma evolucionada puede ser de otro
+// bioma (misma linea). Shiny 1/48 mejorado por el cuidado.
 // false si la mascota es un huevo o no hay nada que sacar.
-bool wildRoll(Pet &p, WildMon &out);
+bool wildRoll(Pet &p, WildMon &out, uint8_t biome);
+// Siguiente bioma en el orden de la pantalla (PRADERA BOSQUE AGUA CUEVA VOLCAN
+// NIEVE), en circulo; dir +1 o -1. Un valor invalido cuenta como pradera.
+uint8_t wildBiomeStep(uint8_t biome, int dir);
 // Nivel al que evoluciona la forma anterior de una especie (2 si es forma base).
 int wildPreEvoLevel(int16_t dex);
 
