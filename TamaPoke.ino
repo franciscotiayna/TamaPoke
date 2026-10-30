@@ -14,6 +14,9 @@
 #include "Arduino_GFX_Library.h"
 #include "TouchDrvCSTXXX.hpp"
 #include <esp_sleep.h>
+#ifdef ESP_PLATFORM
+#include <nvs.h>   // comando NVS: estadisticas y error exacto al guardar la Pokedex
+#endif
 #include <driver/gpio.h>
 #include <driver/rtc_io.h>
 #include "pin_config.h"
@@ -700,6 +703,24 @@ int16_t tX0, tY0, tXl, tYl; // gesto en curso (inicio y ultima posicion)
 uint32_t tStart = 0;
 bool holdFired = false;
 
+// Todo lo que el jugador tiene cuenta en la Pokedex. Repone al arrancar lo que se
+// hubiera perdido: hasta que se arreglo buildSquad, tras cada combate la mascota
+// dejaba de poder guardar y los registros solo vivian en la RAM.
+static void dexFromOwned() {
+  bool changed = false;
+  auto add = [&](int16_t d, bool sh) {
+    if (d < 1 || d > DEX_COUNT) return;
+    if (!pet.isRegistered(d) || (sh && !pet.isShinyRegistered(d))) {
+      pet.registerCaught(d, sh);
+      changed = true;
+    }
+  };
+  for (const PartyMon &m : party.slots) add(m.dex, m.shiny);
+  for (const PartyMon &m : party.box) add(m.dex, m.shiny);
+  if (!pet.isEgg()) add(pet.speciesId, pet.shiny);
+  if (changed) pet.saveNow();
+}
+
 void setup() {
   Serial.setRxBufferSize(8192);  // la transferencia a SD llega en bloques de 2 KB
   Serial.begin(115200);
@@ -745,6 +766,7 @@ void setup() {
 
   party.begin();
   pet.begin();
+  dexFromOwned();
   sdBegin();
   thumbs.load();
 
@@ -1182,6 +1204,38 @@ void handleSerial() {
     Serial.printf("coins=%u balls=%u explores=%u/%u ambient=%u/%u day=%u egg=%d biome=%u\n",
                   gWild.coins, gWild.balls, gWild.explores, WILD_EXPLORES_PER_DAY,
                   gWild.ambient, WILD_AMBIENT_PER_DAY, (unsigned)gWild.day, pet.hasStoredEgg(), gWild.biome);
+    Serial.println("DONE");
+  } else if (line == "NVS") {   // diagnostico: espacio de la NVS y error exacto al guardar la Pokedex
+#ifdef ESP_PLATFORM
+    nvs_stats_t st = {};
+    esp_err_t e = nvs_get_stats(NULL, &st);
+    Serial.printf("nvs stats=%s usadas=%u libres=%u total=%u ns=%u\n", esp_err_to_name(e),
+                  (unsigned)st.used_entries, (unsigned)st.free_entries,
+                  (unsigned)st.total_entries, (unsigned)st.namespace_count);
+    nvs_handle_t h;
+    e = nvs_open("tamapoke", NVS_READWRITE, &h);
+    if (e == ESP_OK) {
+      esp_err_t s = nvs_set_blob(h, "dexreg", pet.dexReg, sizeof(pet.dexReg));
+      esp_err_t c = nvs_commit(h);
+      size_t len = 0;
+      nvs_get_blob(h, "dexreg", NULL, &len);
+      nvs_close(h);
+      Serial.printf("dexreg set=%s commit=%s guardado=%u bytes\n", esp_err_to_name(s),
+                    esp_err_to_name(c), (unsigned)len);
+    } else {
+      Serial.printf("nvs open=%s\n", esp_err_to_name(e));
+    }
+#else
+    Serial.println("nvs: solo en la placa");
+#endif
+    Serial.println("DONE");
+  } else if (line.startsWith("DEXADD ")) {   // registra una especie a mano (recuperar la Pokedex)
+    int d = line.substring(7).toInt();
+    if (d >= 1 && d <= DEX_COUNT) {
+      pet.registerCaught((int16_t)d, false);
+      pet.saveNow();
+      Serial.printf("registrado %d %s\n", d, DEX_TBL[d].name);
+    }
     Serial.println("DONE");
   } else if (line == "KEYPIN") {  // diagnostico de la tecla PWR en GPIO3 (suspension)
     int lvl = digitalRead(PWR_KEY_IO);
@@ -3759,10 +3813,18 @@ static void buildSquad(uint8_t maxLvl, uint8_t maxCount, uint16_t mask) {
   btlPetIn = false;
   if (maxCount > TRAINER_TEAM_MAX) maxCount = TRAINER_TEAM_MAX;
   if (!pet.isEgg() && btlSquadN < maxCount && (mask & 1)) {
-    Pet tmp = pet;                       // a copy: the real pet is untouched
-    if (maxLvl && tmp.level() > maxLvl)
-      tmp.ageMinutes = (uint32_t)(maxLvl - 1) * MINUTES_PER_LEVEL;
-    combatantFromPet(btlSquad[btlSquadN++], tmp);
+    // NO copy of the pet. `Pet tmp = pet` copied its Preferences too, and the
+    // copy's destructor called end() -- nvs_close() on the REAL pet's handle.
+    // From the first battle until the next reboot every Pet::save() failed in
+    // silence: captures, evolutions and hatches registered in RAM and vanished
+    // on the next restart. The emulator's Preferences never closes anything, so
+    // no test could see it. The cap is applied to the live pet and undone at
+    // once, with nothing in between that saves.
+    uint32_t keepAge = pet.ageMinutes;
+    if (maxLvl && pet.level() > maxLvl)
+      pet.ageMinutes = (uint32_t)(maxLvl - 1) * MINUTES_PER_LEVEL;
+    combatantFromPet(btlSquad[btlSquadN++], pet);
+    pet.ageMinutes = keepAge;
     btlPetIn = true;      // the training reward goes to whoever fought for it
   }
   for (int i = 0; i < PARTY_SLOTS && btlSquadN < maxCount; i++) {

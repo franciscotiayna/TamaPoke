@@ -98,6 +98,13 @@ struct StoredEgg {
 
 class Pet {
 public:
+  // A Pet owns an open Preferences handle. A COPY carries the same handle, and
+  // its destructor closes it: every later save of the original then fails in
+  // silence until a reboot (buildSquad's `Pet tmp = pet` did exactly that after
+  // every battle). Copying is forbidden so it cannot come back.
+  Pet() = default;
+  Pet(const Pet &) = delete;
+  Pet &operator=(const Pet &) = delete;
   // Estadisticas 0..100
   uint8_t fullness = 80;  // comida
   uint8_t joy = 80;       // felicidad
