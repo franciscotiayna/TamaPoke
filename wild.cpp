@@ -71,7 +71,7 @@ bool wildFlees(uint8_t failedThrows) {
   return failedThrows >= 4 && random(4) == 0;
 }
 
-#define WILD_CAND_MAX 260   // como CAND_MAX en pet.cpp: cabe la region mas grande
+#define WILD_CAND_MAX 260   // como CAND_MAX en pet.cpp: el mayor bioma+rareza son 115 de 809
 
 // Nivel al que evoluciona la forma anterior de `dex` (el minimo con el que tiene
 // sentido verlo), o 2 si es una forma base. Las ramas de Eevee no estan en
