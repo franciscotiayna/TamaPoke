@@ -1179,9 +1179,9 @@ void handleSerial() {
     wildSaveNow();
     Serial.println("DONE");
   } else if (line == "WILDINFO") {
-    Serial.printf("coins=%u balls=%u explores=%u/%u ambient=%u/%u day=%u egg=%d\n",
+    Serial.printf("coins=%u balls=%u explores=%u/%u ambient=%u/%u day=%u egg=%d biome=%u\n",
                   gWild.coins, gWild.balls, gWild.explores, WILD_EXPLORES_PER_DAY,
-                  gWild.ambient, WILD_AMBIENT_PER_DAY, (unsigned)gWild.day, pet.hasStoredEgg());
+                  gWild.ambient, WILD_AMBIENT_PER_DAY, (unsigned)gWild.day, pet.hasStoredEgg(), gWild.biome);
     Serial.println("DONE");
   } else if (line == "KEYPIN") {  // diagnostico de la tecla PWR en GPIO3 (suspension)
     int lvl = digitalRead(PWR_KEY_IO);
@@ -5855,11 +5855,19 @@ void renderCard() {
 // ---------- EXPLORAR (fila del menu) ----------
 #define EXP_BTN_X 103
 #define EXP_BTN_W 260
-#define EXP_SEARCH_Y 146
-#define EXP_SEARCH_H 56
-#define EXP_BUY1_Y 250
-#define EXP_BUY10_Y 306
+#define EXP_BIOME_Y 136      // fila "<  BOSQUE  >"
+#define EXP_BIOME_H 44
+#define EXP_ARROW_W 60       // zona tactil de cada flecha, en los extremos de la fila
+#define EXP_SEARCH_Y 188
+#define EXP_SEARCH_H 52
+#define EXP_BUY1_Y 270
+#define EXP_BUY10_Y 324
 #define EXP_BUY_H 48
+
+// nombre del bioma, indexado por el valor de DEX_TBL.biome (0..5)
+static const StrId BIOME_NAME[WILD_BIOMES] = {
+  S_BIOME_GRASS, S_BIOME_WATER, S_BIOME_FOREST, S_BIOME_VOLCANO, S_BIOME_CAVE, S_BIOME_SNOW
+};
 
 void renderExplore() {
   gfx->fillScreen(RGB565_BLACK);
@@ -5877,6 +5885,19 @@ void renderExplore() {
   gfx->print(l1);
   gfx->setCursor(CX - (int)strlen(l2) * 6, 114);
   gfx->print(l2);
+
+  // bioma: "<  BOSQUE  >"; las flechas lo cambian (exploreTap)
+  gfx->fillRoundRect(EXP_BTN_X, EXP_BIOME_Y, EXP_BTN_W, EXP_BIOME_H, 12, UI_BG_DAY);
+  gfx->drawRoundRect(EXP_BTN_X, EXP_BIOME_Y, EXP_BTN_W, EXP_BIOME_H, 12, UI_INK);
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(2);
+  gfx->setCursor(EXP_BTN_X + 16, EXP_BIOME_Y + EXP_BIOME_H / 2 - 8);
+  gfx->print("<");
+  gfx->setCursor(EXP_BTN_X + EXP_BTN_W - 28, EXP_BIOME_Y + EXP_BIOME_H / 2 - 8);
+  gfx->print(">");
+  const char *bn = T(BIOME_NAME[gWild.biome < WILD_BIOMES ? gWild.biome : 0]);
+  gfx->setCursor(CX - (int)strlen(bn) * 6, EXP_BIOME_Y + EXP_BIOME_H / 2 - 8);
+  gfx->print(bn);
 
   bool searchOk = gWild.explores < WILD_EXPLORES_PER_DAY && wildCanStart();
   char s[24];
@@ -5919,6 +5940,18 @@ static bool expHit(int16_t x, int16_t y, int top, int h) {
 }
 
 void exploreTap(int16_t x, int16_t y) {
+  if (y >= EXP_BIOME_Y && y <= EXP_BIOME_Y + EXP_BIOME_H) {   // flechas del bioma
+    if (x >= EXP_BTN_X && x <= EXP_BTN_X + EXP_ARROW_W) {
+      gWild.biome = wildBiomeStep(gWild.biome, -1);
+    } else if (x >= EXP_BTN_X + EXP_BTN_W - EXP_ARROW_W && x <= EXP_BTN_X + EXP_BTN_W) {
+      gWild.biome = wildBiomeStep(gWild.biome, +1);
+    } else {
+      return;                  // el nombre no hace nada
+    }
+    wildDirty = true;          // se guarda al salir de EXPLORAR, como las compras
+    sfxPlay(SFX_TAP);
+    return;
+  }
   if (expHit(x, y, EXP_SEARCH_Y, EXP_SEARCH_H)) {
     WildMon w;
     if (gWild.explores >= WILD_EXPLORES_PER_DAY || !wildCanStart() || !wildRoll(pet, w, gWild.biome)) {

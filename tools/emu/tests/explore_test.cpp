@@ -6,6 +6,8 @@
 //     the day's searches, and at 5/5 it refuses without starting anything
 //   * +1 / +10 respect both the coins and the ball cap, and a purchase waits in
 //     wildDirty until EXPLORE is left (an NVS write freezes the flash ~1 s)
+//   * the biome row: its arrows walk the six biomes in screen order and wrap, the
+//     name does nothing, and SEARCH / the bubble roll from the biome shown
 //   * the bubble starts a fight when tapped -- but NOT while a main-screen
 //     dialog is up: it is hidden then, and a hidden target must not be live
 //   * CRIAR is refused while a move offer is pending, and changes nothing
@@ -15,6 +17,7 @@
 #include "pet.h"
 #include "party.h"
 #include "wild.h"
+#include "dex.h"
 #include <cstdio>
 #include <cstring>
 uint32_t g_seed=4242; FakeSerial Serial; FakeESP ESP; FakeWire Wire;
@@ -29,6 +32,7 @@ uint8_t uiCurrentScreen();
 extern const char *const SCREEN_NAME[];
 extern Pet pet;
 extern WildState gWild;
+extern WildMon wildMon;
 extern bool wildDirty, exploreOpen, menuOpen, battleOpen, btlWild, partyOpen;
 extern uint32_t wildBubbleUntil, feedMenuUntil, confirmUntil, partyBannerUntil;
 extern uint8_t choiceKind, partyDetail, boxSwapFrom;
@@ -36,11 +40,14 @@ extern uint8_t choiceKind, partyDetail, boxSwapFrom;
 static int bad=0;
 static void ck(bool ok,const char*w){printf("%s  %s\n",ok?"PASS":"FAIL",w); if(!ok)bad++;}
 
-// The sketch's layout, restated once here: EXP_* (search 146+56, buys 250/306
-// +48), WILD_BUB_* (CX+90, 132), the party grid and the sheet's left button.
-#define EXP_SEARCH_CY (146 + 56/2)
-#define EXP_BUY1_CY (250 + 48/2)
-#define EXP_BUY10_CY (306 + 48/2)
+// The sketch's layout, restated once here: EXP_* (biome row 136+44, search
+// 188+52, buys 270/324 +48), WILD_BUB_* (CX+90, 132), the party grid and the sheet's left button.
+#define EXP_BIOME_CY (136 + 44/2)
+#define EXP_ARROW_L_X (103 + 20)
+#define EXP_ARROW_R_X (103 + 260 - 20)
+#define EXP_SEARCH_CY (188 + 52/2)
+#define EXP_BUY1_CY (270 + 48/2)
+#define EXP_BUY10_CY (324 + 48/2)
 #define EXP_BACK_Y 404
 #define BUB_X (233 + 90)
 #define BUB_Y 132
@@ -48,6 +55,22 @@ static void ck(bool ok,const char*w){printf("%s  %s\n",ok?"PASS":"FAIL",w); if(!
 #define PCELL_Y(i) (88 + ((i) / 2) * 78)
 #define SHEET_L_X 160
 #define SHEET_BTN_Y (336 + 48/2)
+
+// La especie o alguna de sus formas anteriores es de ese bioma (copia de wild_test):
+// un salvaje puede salir evolucionado y la forma evolucionada tener otro bioma.
+static bool lineHasBiome(int16_t d, uint8_t b) {
+  for (int guard = 0; guard < 4 && d >= 1; guard++) {
+    if (DEX_TBL[d].biome == b) return true;
+    int16_t pre = 0;
+    for (int16_t i = 1; i <= DEX_COUNT && !pre; i++)
+      if (DEX_TBL[i].evolvesTo == d) pre = i;
+    if (!pre)
+      for (int k = 0; k < EEVEE_EVO_COUNT && !pre; k++)
+        if (EEVEE_EVOS[k] == d) pre = DEX_EEVEE;
+    d = pre;
+  }
+  return false;
+}
 
 static void endBattle(){ battleOpen=false; btlWild=false; }
 static void quiet(){
@@ -88,6 +111,63 @@ int main(){
     ck(gWild.explores == WILD_EXPLORES_PER_DAY, "and spends nothing");
     ck(exploreOpen, "and the screen stays up");
     gWild.explores = 0;
+  }
+
+  // ---- the biome row
+  {
+    quiet();
+    exploreOpen = true; wildDirty = false;
+    gWild.biome = 0;
+    const uint8_t order[6] = { 2, 1, 4, 3, 5, 0 };   // MEADOW -> FOREST -> WATER -> CAVE -> VOLCANO -> SNOW -> MEADOW
+    bool walk = true, dirtyOk = true;
+    for (int i = 0; i < 6; i++) {
+      wildDirty = false;
+      onTap(EXP_ARROW_R_X, EXP_BIOME_CY);
+      if (gWild.biome != order[i]) walk = false;
+      if (!wildDirty) dirtyOk = false;
+    }
+    ck(walk, "the right arrow visits forest, water, cave, volcano, snow and wraps to meadow");
+    ck(dirtyOk, "every arrow tap waits in wildDirty");
+    wildDirty = false;
+    onTap(EXP_ARROW_L_X, EXP_BIOME_CY);
+    ck(gWild.biome == 5, "the left arrow from meadow wraps to snow");
+    onTap(EXP_ARROW_L_X, EXP_BIOME_CY);
+    ck(gWild.biome == 3, "and walks back: snow -> volcano");
+    gWild.biome = 0; wildDirty = false;
+    onTap(233, EXP_BIOME_CY);
+    ck(gWild.biome == 0 && !wildDirty, "tapping the biome name changes nothing");
+    ck(exploreOpen && !battleOpen, "and the screen stays up");
+    quiet();
+  }
+
+  // ---- SEARCH and the bubble roll from the chosen biome
+  {
+    quiet();
+    bool caveOk = true;
+    for (int n = 0; n < 8; n++) {
+      quiet();
+      exploreOpen = true; gWild.explores = 0; gWild.balls = 5; gWild.biome = 4;
+      onTap(233, EXP_SEARCH_CY);
+      if (!battleOpen || !btlWild) { caveOk = false; break; }
+      if (!lineHasBiome(wildMon.dex, 4)) caveOk = false;
+      endBattle();
+    }
+    ck(caveOk, "with the cave chosen SEARCH always meets a cave line");
+    gWild.explores = 0;
+
+    bool bubbleOk = true;
+    for (int n = 0; n < 8; n++) {
+      quiet();
+      gWild.biome = 1;
+      wildBubbleUntil = millis() + 30000;
+      onTap(BUB_X, BUB_Y);
+      if (!battleOpen || !btlWild) { bubbleOk = false; break; }
+      if (!lineHasBiome(wildMon.dex, 1)) bubbleOk = false;
+      endBattle();
+    }
+    ck(bubbleOk, "the bubble rolls from the last biome picked (water)");
+    gWild.biome = 0;
+    quiet();
   }
 
   // ---- the shop: coins, the ball cap, and the deferred save
